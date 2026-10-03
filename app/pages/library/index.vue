@@ -17,6 +17,8 @@ const { data: networks, isLoading, refetch } = useQuery({
   queryFn: () => api.networkList(),
 })
 
+const deleteTarget = ref<NetworkSummary | null>(null)
+
 const startMutation = useMutation({
   mutationFn: (id: string) => api.networkStart(id),
   onSuccess: () => queryClient.invalidateQueries({ queryKey: ['networks'] }),
@@ -44,13 +46,7 @@ async function copyJoin(address: string) {
 }
 
 function confirmDelete(item: NetworkSummary) {
-  const msg =
-    'Delete network "' +
-    item.network.name +
-    '"? This removes all server data and cannot be undone.'
-  if (window.confirm(msg)) {
-    deleteMutation.mutate(item.network.id)
-  }
+  deleteTarget.value = item
 }
 </script>
 
@@ -137,6 +133,22 @@ function confirmDelete(item: NetworkSummary) {
         </div>
       </PpCard>
     </div>
+
+    <PpModal
+      v-if="deleteTarget"
+      :open="!!deleteTarget"
+      title="Delete network?"
+      confirm-label="Delete"
+      danger
+      :loading="deleteMutation.isPending.value"
+      @close="deleteTarget = null"
+      @confirm="deleteMutation.mutate(deleteTarget!.network.id); deleteTarget = null"
+    >
+      <p>
+        Delete &quot;{{ deleteTarget?.network.name }}&quot;? This removes all server data and cannot
+        be undone.
+      </p>
+    </PpModal>
   </div>
 </template>
 

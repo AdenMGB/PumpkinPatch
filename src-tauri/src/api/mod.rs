@@ -3,12 +3,17 @@ use serde::{Serialize, Serializer};
 use thiserror::Error as ThisError;
 
 pub mod analytics;
+pub mod backup;
 pub mod catalog;
+pub mod future;
 pub mod console;
+pub mod health;
 pub mod network;
+pub mod ops;
 pub mod ping;
 pub mod server;
 pub mod settings;
+pub mod templates;
 
 pub type Result<T> = std::result::Result<T, PatchApiError>;
 

@@ -26,6 +26,26 @@ const { data: ping } = useQuery({
   enabled: computed(() => network.value?.status === 'running'),
 })
 
+const { data: health, isLoading: healthLoading } = useQuery({
+  queryKey: ['network-health', id],
+  queryFn: () => api.networkHealthGet(id.value),
+  refetchInterval: 15000,
+})
+
+const deleteOpen = ref(false)
+const autoRestart = computed({
+  get: () => network.value?.network.auto_restart ?? false,
+  set: (v: boolean) => {
+    api.networkSetAutoRestart(id.value, v).then(() => {
+      queryClient.invalidateQueries({ queryKey: ['network', id] })
+    })
+  },
+})
+
+const backupMutation = useMutation({
+  mutationFn: () => api.networkExportBackupDefault(id.value),
+})
+
 const startMutation = useMutation({
   mutationFn: () => api.networkStart(id.value),
   onSuccess: () => queryClient.invalidateQueries({ queryKey: ['network', id] }),
@@ -64,9 +84,7 @@ async function copyJoin() {
 }
 
 function confirmDeleteNetwork() {
-  if (window.confirm('Delete this network and all server files?')) {
-    deleteMutation.mutate()
-  }
+  deleteOpen.value = true
 }
 
 const backendServers = computed(() =>
@@ -127,6 +145,13 @@ async function copyCommand(cmd: string) {
         </template>
       </PpPageHeader>
 
+      <NetworkHealthPanel :report="health" :loading="healthLoading" />
+
+      <PpCard v-if="network.network.last_crash_source" padding="md" class="crash">
+        <PpBadge tone="danger">Last crash</PpBadge>
+        <span class="pp-muted">{{ network.network.last_crash_source }}</span>
+      </PpCard>
+
       <div v-if="ping?.online" class="ping-banner">
         <PpBadge tone="success">Hub online</PpBadge>
         <span class="pp-muted">
@@ -184,6 +209,17 @@ async function copyCommand(cmd: string) {
           </li>
         </ul>
 
+        <div class="ops-row">
+          <label class="auto-restart">
+            <input v-model="autoRestart" type="checkbox" />
+            Auto-restart on crash (max 5 attempts)
+          </label>
+          <PpButton variant="secondary" :loading="backupMutation.isPending.value" @click="backupMutation.mutate()">
+            Backup network
+          </PpButton>
+          <p v-if="backupMutation.data" class="pp-muted backup-path">{{ backupMutation.data }}</p>
+        </div>
+
         <div class="add-backend">
           <PpInput v-model="newBackendName" label="New backend" placeholder="minigames" />
           <PpButton
@@ -197,6 +233,17 @@ async function copyCommand(cmd: string) {
           </PpButton>
         </div>
       </PpCard>
+      <PpModal
+        :open="deleteOpen"
+        title="Delete network?"
+        confirm-label="Delete"
+        danger
+        :loading="deleteMutation.isPending.value"
+        @close="deleteOpen = false"
+        @confirm="deleteMutation.mutate(); deleteOpen = false"
+      >
+        <p>This removes all server files and cannot be undone.</p>
+      </PpModal>
     </template>
   </div>
 </template>
@@ -294,5 +341,28 @@ async function copyCommand(cmd: string) {
   align-items: center;
   gap: 0.65rem;
   flex-wrap: wrap;
+}
+.crash {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+.auto-restart {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+.ops-row {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.backup-path {
+  font-size: 0.75rem;
+  word-break: break-all;
 }
 </style>

@@ -1,9 +1,11 @@
 use super::Result;
 use crate::bundled_plugins::provision_network_plugins;
 use crate::state::AppStateHandle;
+use tauri::Manager;
 use patch_core::{
-    deploy_plugin, ping_server, CreateNetworkRequest, JoinInfo, LogLine, NetworkOrchestrator,
-    NetworkSummary, PingResult, PluginManifest, PluginManifestEntry,
+    deploy_plugin, ensure_java_meets_minimum, ping_server, CreateNetworkRequest, JoinInfo,
+    LogLine, NetworkOrchestrator, NetworkSummary, PingResult, PluginManifest, PluginManifestEntry,
+    ProcessExitEvent,
 };
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
@@ -81,7 +83,9 @@ pub async fn network_delete(state: tauri::State<'_, AppStateHandle>, id: Uuid) -
     {
         let mut processes = inner.processes.write().await;
         if processes.is_running(id) {
-            processes.stop_network(id).await?;
+            let network = inner.db.get_network(id).await?;
+            let servers = inner.db.list_servers_for_network(id).await?;
+            processes.stop_network(id, &network, &servers).await?;
         }
     }
     inner.db.delete_network(id).await?;
@@ -103,8 +107,19 @@ pub async fn network_start(
     let servers = inner.db.list_servers_for_network(id).await?;
     let java_path = inner.resolve_java_for_runtime().await?;
     let settings = inner.settings().await;
+    ensure_java_meets_minimum(
+        std::path::Path::new(java_path.as_str()),
+        settings.java_min_major,
+    )?;
+
+    NetworkOrchestrator::preflight_start_ports(
+        &settings.bind_host,
+        network.hub_port,
+        &servers,
+    )?;
 
     let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel::<LogLine>();
+    let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel::<ProcessExitEvent>();
     let app_handle = app.clone();
     tokio::spawn(async move {
         while let Some(line) = log_rx.recv().await {
@@ -112,10 +127,73 @@ pub async fn network_start(
         }
     });
 
+    let app_exit = app.clone();
+    tokio::spawn(async move {
+        while let Some(ev) = exit_rx.recv().await {
+            let _ = app_exit.emit("network-process-exited", &ev);
+            let state_handle = app_exit.state::<AppStateHandle>();
+            if let Ok(inner) = state_handle.get().await {
+                let _ = inner
+                    .db
+                    .record_network_crash(ev.network_id, &ev.source)
+                    .await;
+                let network = inner.db.get_network(ev.network_id).await.ok();
+                let should_restart = network.as_ref().map(|n| n.auto_restart).unwrap_or(false);
+                let attempts = network.as_ref().map(|n| n.restart_attempts).unwrap_or(0);
+                {
+                    let mut processes = inner.processes.write().await;
+                    processes.mark_error(ev.network_id);
+                }
+                if should_restart && attempts < 5 {
+                    if let (Ok(network), Ok(servers)) = (
+                        inner.db.get_network(ev.network_id).await,
+                        inner.db.list_servers_for_network(ev.network_id).await,
+                    ) {
+                        let settings = inner.settings().await;
+                        let java_path = inner.resolve_java_for_runtime().await.ok();
+                        let (log_tx, mut log_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<LogLine>();
+                        let app_log = app_exit.clone();
+                        tokio::spawn(async move {
+                            while let Some(line) = log_rx.recv().await {
+                                let _ = app_log.emit("network-log", &line);
+                            }
+                        });
+                        if let Ok(java_path) = java_path {
+                            if let Ok((pumpkin, velocity)) = inner
+                                .networks
+                                .ensure_binaries_for_network(&servers, None)
+                                .await
+                            {
+                                let mut processes = inner.processes.write().await;
+                                let _ = processes
+                                    .start_network(
+                                        &network,
+                                        &servers,
+                                        pumpkin,
+                                        velocity,
+                                        &java_path,
+                                        &settings.bind_host,
+                                        &inner.networks,
+                                        Some(log_tx),
+                                        None,
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     let (pumpkin, velocity) = inner
         .networks
         .ensure_binaries_for_network(&servers, None)
         .await?;
+
+    inner.db.reset_restart_attempts(id).await?;
+    inner.db.touch_network_played(id).await?;
 
     let mut processes = inner.processes.write().await;
     processes
@@ -128,6 +206,7 @@ pub async fn network_start(
             &settings.bind_host,
             &inner.networks,
             Some(log_tx),
+            Some(exit_tx),
         )
         .await?;
     let _ = app.emit("network-started", id);
@@ -141,8 +220,10 @@ pub async fn network_stop(
     id: Uuid,
 ) -> Result<()> {
     let inner = state.get().await?;
+    let network = inner.db.get_network(id).await?;
+    let servers = inner.db.list_servers_for_network(id).await?;
     let mut processes = inner.processes.write().await;
-    processes.stop_network(id).await?;
+    processes.stop_network(id, &network, &servers).await?;
     let _ = app.emit("network-stopped", id);
     Ok(())
 }
@@ -198,6 +279,15 @@ pub async fn plugin_deploy(
         &inner.dirs.plugins_cache,
         server_role.as_deref(),
     )?;
+    inner
+        .db
+        .record_deployed_plugin(
+            &entry.id,
+            &instance_path,
+            &dest.to_string_lossy(),
+        )
+        .await
+        .ok();
     Ok(dest.to_string_lossy().into())
 }
 

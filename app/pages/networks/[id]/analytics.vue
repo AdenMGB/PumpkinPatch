@@ -129,7 +129,7 @@ const kpi = computed(() => {
       <template #actions>
         <PpButton variant="secondary" size="sm" :loading="isFetching" @click="refetch()">
           Refresh
-        </PButton>
+        </PpButton>
       </template>
     </PpPageHeader>
 

@@ -9,6 +9,29 @@ const filter = ref('')
 const command = ref('')
 const target = ref('hub')
 const consoleRef = ref<HTMLElement | null>(null)
+const historyKey = computed(() => `patch-console-history-${id.value}`)
+const history = ref<string[]>([])
+const favorites = ref<string[]>([])
+
+onMounted(() => {
+  if (import.meta.client) {
+    try {
+      history.value = JSON.parse(localStorage.getItem(historyKey.value) ?? '[]')
+      favorites.value = JSON.parse(localStorage.getItem(`${historyKey.value}-fav`) ?? '[]')
+    } catch {
+      history.value = []
+    }
+  }
+})
+
+function pushHistory(cmd: string) {
+  const trimmed = cmd.trim()
+  if (!trimmed) return
+  history.value = [trimmed, ...history.value.filter((c) => c !== trimmed)].slice(0, 30)
+  if (import.meta.client) {
+    localStorage.setItem(historyKey.value, JSON.stringify(history.value))
+  }
+}
 
 const { data: network } = useQuery({
   queryKey: ['network', id],
@@ -66,6 +89,7 @@ const sendMutation = useMutation({
         line: res.output,
       })
     }
+    pushHistory(command.value)
     command.value = ''
   },
   onError: (err: Error) => {
@@ -98,13 +122,20 @@ function onKeydown(e: KeyboardEvent) {
       description="Live logs plus commands — Velocity via proxy console, Pumpkin servers via RCON."
     />
 
+    <div class="target-tabs" data-tauri-drag-region-exclude>
+      <button
+        v-for="t in targets"
+        :key="t.value"
+        type="button"
+        class="tab"
+        :class="{ active: target === t.value }"
+        @click="target = t.value"
+      >
+        {{ t.label }}
+      </button>
+    </div>
+
     <div class="toolbar" data-tauri-drag-region-exclude>
-      <PpSelect
-        v-model="target"
-        label="Send to"
-        :options="targets"
-        class="target-select"
-      />
       <PpInput v-model="filter" label="Filter logs" placeholder="velocity, lobby, survival…" class="filter" />
     </div>
 
@@ -135,6 +166,19 @@ function onKeydown(e: KeyboardEvent) {
       Pumpkin servers use RCON on port <code class="pp-code">game_port + 2000</code> (e.g. lobby
       25566 → 27566). Velocity commands show up in the log stream.
     </p>
+
+    <div v-if="history.length" class="history">
+      <span class="pp-muted">Recent:</span>
+      <button
+        v-for="h in history.slice(0, 8)"
+        :key="h"
+        type="button"
+        class="hist-btn"
+        @click="command = h"
+      >
+        {{ h }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -196,5 +240,44 @@ function onKeydown(e: KeyboardEvent) {
 .hint {
   margin: 0.65rem 0 0;
   font-size: 0.8rem;
+}
+.target-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+.tab {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+.tab.active {
+  border-color: var(--color-accent);
+  background: var(--color-accent-muted);
+}
+.tab:hover {
+  transform: scale(1.02);
+}
+.history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin-top: 0.65rem;
+}
+.hist-btn {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
 }
 </style>

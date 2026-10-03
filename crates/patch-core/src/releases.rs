@@ -22,6 +22,16 @@ pub enum HostOs {
     MacOs,
 }
 
+impl HostOs {
+    fn as_slug(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::Linux => "Linux",
+            Self::MacOs => "MacOS",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostArch {
     X64,
@@ -38,12 +48,22 @@ pub fn detect_host() -> Result<(HostOs, HostArch)> {
             };
             Ok((HostOs::Windows, arch))
         }
-        "linux" => Err(Error::UnsupportedPlatform(
-            "Linux Pumpkin downloads not enabled in this build yet".into(),
-        )),
-        "macos" => Err(Error::UnsupportedPlatform(
-            "macOS Pumpkin downloads not enabled in this build yet".into(),
-        )),
+        "linux" => {
+            let arch = match std::env::consts::ARCH {
+                "x86_64" => HostArch::X64,
+                "aarch64" => HostArch::Arm64,
+                _ => return Err(Error::UnsupportedPlatform(std::env::consts::ARCH.into())),
+            };
+            Ok((HostOs::Linux, arch))
+        }
+        "macos" => {
+            let arch = match std::env::consts::ARCH {
+                "x86_64" => HostArch::X64,
+                "aarch64" => HostArch::Arm64,
+                _ => return Err(Error::UnsupportedPlatform(std::env::consts::ARCH.into())),
+            };
+            Ok((HostOs::MacOs, arch))
+        }
         other => Err(Error::UnsupportedPlatform(other.into())),
     }
 }
@@ -58,10 +78,14 @@ pub fn resolve_pumpkin_artifact(
     arch: HostArch,
     channel: &str,
 ) -> Result<PumpkinArtifact> {
-    let filename = match (os, arch) {
-        (HostOs::Windows, HostArch::X64) => "pumpkin-X64-Windows.exe",
-        (HostOs::Windows, HostArch::Arm64) => "pumpkin-ARM64-Windows.exe",
-        _ => return Err(Error::UnsupportedPlatform("host".into())),
+    let arch_slug = match arch {
+        HostArch::X64 => "X64",
+        HostArch::Arm64 => "ARM64",
+    };
+    let filename = match os {
+        HostOs::Windows => format!("pumpkin-{arch_slug}-Windows.exe"),
+        HostOs::Linux => format!("pumpkin-{arch_slug}-Linux"),
+        HostOs::MacOs => format!("pumpkin-{arch_slug}-MacOS"),
     };
     let tag = match channel {
         "latest" | "nightly" => "nightly",
@@ -72,7 +96,7 @@ pub fn resolve_pumpkin_artifact(
     );
     Ok(PumpkinArtifact {
         url,
-        filename: filename.into(),
+        filename,
     })
 }
 

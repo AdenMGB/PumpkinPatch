@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useMutation } from '@tanstack/vue-query'
+import { useMutation, useQuery } from '@tanstack/vue-query'
 import { useRouter } from 'vue-router'
 import { MinusCircleIcon, PlusIcon } from '@heroicons/vue/24/outline'
 
@@ -11,6 +11,16 @@ const hubPort = ref(25565)
 const minecraftVersion = ref('1.21.4')
 const pumpkinChannel = ref('nightly')
 const backends = ref(['survival', 'creative'])
+const { data: templates } = useQuery({
+  queryKey: ['network-templates'],
+  queryFn: () => api.networkTemplatesList(),
+})
+
+const { data: portMap } = useQuery({
+  queryKey: ['port-map', hubPort, backends],
+  queryFn: () =>
+    api.networkProposedPorts(hubPort.value, backends.value.filter((b) => b.trim()).length),
+})
 
 function addBackend() {
   backends.value.push(`world-${backends.value.length + 1}`)
@@ -41,6 +51,28 @@ const createMutation = useMutation({
       description="Velocity hub + lobby + backends with aligned proxy secrets."
     />
 
+    <PpCard v-if="templates?.length" padding="lg" class="step templates">
+      <h2>Templates</h2>
+      <p class="pp-muted">Start from a preset backend layout.</p>
+      <div class="template-grid">
+        <PpCard
+          v-for="t in templates"
+          :key="t.id"
+          padding="md"
+          hover
+          class="template"
+          @click="
+            backends = [...t.backend_names];
+            pumpkinChannel = t.pumpkin_channel ?? pumpkinChannel;
+            minecraftVersion = t.minecraft_version ?? minecraftVersion
+          "
+        >
+          <strong>{{ t.name }}</strong>
+          <p class="pp-muted">{{ t.description }}</p>
+        </PpCard>
+      </div>
+    </PpCard>
+
     <form class="wizard-form" @submit.prevent="createMutation.mutate()">
       <PpCard padding="lg" class="step">
         <h2>Basics</h2>
@@ -58,6 +90,16 @@ const createMutation = useMutation({
             hint="Usually nightly for latest protocol"
           />
         </div>
+      </PpCard>
+
+      <PpCard v-if="portMap?.length" padding="md" class="step ports">
+        <h2>Ports</h2>
+        <ul class="port-list">
+          <li v-for="p in portMap" :key="p.label">
+            <code class="pp-code">{{ p.label }}</code>
+            <span>{{ p.port }}</span>
+          </li>
+        </ul>
       </PpCard>
 
       <PpCard padding="lg" class="step">

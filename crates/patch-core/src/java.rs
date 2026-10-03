@@ -245,6 +245,33 @@ fn java_works(path: &Path) -> bool {
     }
 }
 
+pub fn java_major_version(path: &Path) -> Result<u32> {
+    let output = Command::new(path)
+        .arg("-version")
+        .output()
+        .map_err(|e| Error::Other(format!("failed to run java -version: {e}")))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let major = parse_java_major(&text);
+    if major == 0 {
+        return Err(Error::Other("could not parse Java version".into()));
+    }
+    Ok(major)
+}
+
+pub fn ensure_java_meets_minimum(path: &Path, min_major: u32) -> Result<()> {
+    let major = java_major_version(path)?;
+    if major < min_major {
+        return Err(Error::Other(format!(
+            "Java {major} found but Java {min_major}+ is required. Update Java in Settings."
+        )));
+    }
+    Ok(())
+}
+
 fn parse_java_major(version_output: &str) -> u32 {
     const MARKER: &str = "version \"";
     for line in version_output.lines() {

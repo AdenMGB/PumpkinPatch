@@ -1,5 +1,23 @@
 export type NetworkRuntimeStatus = 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
 
+export type HealthLevel = 'healthy' | 'degraded' | 'down' | 'unknown'
+
+export interface ComponentHealth {
+  id: string
+  label: string
+  level: HealthLevel
+  detail: string
+}
+
+export interface NetworkHealthReport {
+  network_id: string
+  overall: HealthLevel
+  hub: ComponentHealth
+  servers: ComponentHealth[]
+  plugins: ComponentHealth[]
+  checked_at: string
+}
+
 export interface NetworkRecord {
   id: string
   name: string
@@ -8,6 +26,11 @@ export interface NetworkRecord {
   forwarding_secret: string
   lobby_server_id: string | null
   data_path: string
+  analytics_export_token?: string
+  auto_restart?: boolean
+  last_crash_source?: string | null
+  last_crash_at?: string | null
+  restart_attempts?: number
   created_at: string
 }
 
@@ -44,6 +67,34 @@ export interface AppSettings {
   java_path: string
   bind_host: string
   pumpkin_channel_default: string
+  java_min_major?: number
+}
+
+export interface PortMapEntry {
+  label: string
+  port: number
+}
+
+export interface NetworkTemplate {
+  id: string
+  name: string
+  description: string
+  backend_names: string[]
+  pumpkin_channel?: string | null
+  minecraft_version?: string | null
+}
+
+export interface ProcessExitEvent {
+  network_id: string
+  source: string
+  server_id: string | null
+  exit_code: number | null
+}
+
+export interface DownloadProgress {
+  downloaded: number
+  total: number | null
+  label: string
 }
 
 export interface PingResult {

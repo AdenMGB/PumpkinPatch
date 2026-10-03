@@ -115,6 +115,10 @@ impl NetworkOrchestrator {
             lobby_server_id: Some(lobby_id),
             data_path: network_path.to_string_lossy().into(),
             analytics_export_token: generate_export_secret(),
+            auto_restart: false,
+            last_crash_source: None,
+            last_crash_at: None,
+            restart_attempts: 0,
             created_at: Utc::now(),
         };
 
@@ -225,7 +229,31 @@ enabled = false
             &network.forwarding_secret,
             servers,
         )?;
+        if let Some(lobby) = servers.iter().find(|s| s.role == "lobby") {
+            let _ = crate::hub_config::write_lobby_server_list(
+                std::path::Path::new(&lobby.data_path),
+                servers,
+            );
+        }
         Ok(())
+    }
+
+    pub fn preflight_start_ports(
+        bind_host: &str,
+        hub_port: u16,
+        servers: &[ServerRecord],
+    ) -> Result<()> {
+        let mut ports = vec![hub_port];
+        ports.extend(servers.iter().map(|s| s.game_port));
+        crate::ports::assert_ports_free(bind_host, &ports)
+    }
+
+    pub fn proposed_port_map(hub_port: u16, backend_count: usize) -> Vec<(String, u16)> {
+        let mut out = vec![("hub".into(), hub_port), ("lobby".into(), allocate_port(hub_port, 1))];
+        for idx in 0..backend_count {
+            out.push((format!("backend_{idx}"), allocate_port(hub_port, 2 + idx as u16)));
+        }
+        out
     }
 
     pub async fn ensure_binaries_for_network(
@@ -293,6 +321,12 @@ enabled = false
             &network.forwarding_secret,
             &all,
         )?;
+        if let Some(lobby) = all.iter().find(|s| s.role == "lobby") {
+            let _ = crate::hub_config::write_lobby_server_list(
+                std::path::Path::new(&lobby.data_path),
+                &all,
+            );
+        }
         Ok(backend)
     }
 
@@ -321,6 +355,12 @@ enabled = false
             &network.forwarding_secret,
             &all,
         )?;
+        if let Some(lobby) = all.iter().find(|s| s.role == "lobby") {
+            let _ = crate::hub_config::write_lobby_server_list(
+                std::path::Path::new(&lobby.data_path),
+                &all,
+            );
+        }
         Ok(())
     }
 }

@@ -1,13 +1,17 @@
 [package]
 name = "patch-hub-lobby"
 version = "0.1.0"
-edition.workspace = true
-description = "Pumpkin Patch lobby plugin (scaffold — build against Pumpkin plugin SDK when pinning versions)"
+edition = "2021"
+description = "Pumpkin Patch hub lobby server selector"
+license = "MIT"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
 
 [dependencies]
 patch-network-protocol = { path = "../patch-network-protocol" }
+pumpkin-plugin-api = { git = "https://github.com/Pumpkin-MC/Pumpkin", rev = "1859221e7ad1227f43277f74507f921c0acec83f", package = "pumpkin-plugin-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[lib]
-path = "src/lib.rs"

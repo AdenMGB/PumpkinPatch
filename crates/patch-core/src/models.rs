@@ -71,6 +71,12 @@ pub struct NetworkRecord {
     pub lobby_server_id: Option<Uuid>,
     pub data_path: String,
     pub analytics_export_token: String,
+    #[serde(default)]
+    pub auto_restart: bool,
+    pub last_crash_source: Option<String>,
+    pub last_crash_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub restart_attempts: u32,
     pub created_at: DateTime<Utc>,
 }
 
@@ -137,6 +143,12 @@ pub struct AppSettings {
     pub java_path: String,
     pub bind_host: String,
     pub pumpkin_channel_default: String,
+    #[serde(default = "default_java_min_major")]
+    pub java_min_major: u32,
+}
+
+fn default_java_min_major() -> u32 {
+    21
 }
 
 impl Default for AppSettings {
@@ -145,6 +157,7 @@ impl Default for AppSettings {
             java_path: "java".into(),
             bind_host: "127.0.0.1".into(),
             pumpkin_channel_default: "nightly".into(),
+            java_min_major: 21,
         }
     }
 }

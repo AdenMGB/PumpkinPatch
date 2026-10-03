@@ -10,8 +10,12 @@ import type {
   ModrinthVersion,
   PumpkinMarketListResult,
   NetworkAnalyticsOverview,
+  NetworkHealthReport,
   NetworkSummary,
+  NetworkTemplate,
   PingResult,
+  PortMapEntry,
+  DownloadProgress,
   ServerRecord,
   ServerSettings,
   UpdateHubSettingsRequest,
@@ -31,6 +35,38 @@ export function usePatchApi() {
     networkStop: (id: string) => invoke<void>('network_stop', { id }),
     networkJoinInfo: (id: string) => invoke<JoinInfo>('network_get_join_info', { id }),
     networkPingHub: (id: string) => invoke<PingResult>('network_ping_hub', { id }),
+    networkHealthGet: (networkId: string) =>
+      invoke<NetworkHealthReport>('network_health_get', { networkId }),
+    networkExportBackup: (networkId: string, destPath: string) =>
+      invoke<void>('network_export_backup', { networkId, destPath }),
+    networkExportBackupDefault: (networkId: string) =>
+      invoke<string>('network_export_backup_default', { networkId }),
+    networkImportBackup: (zipPath: string) => invoke<string>('network_import_backup', { zipPath }),
+    networkProposedPorts: (hubPort: number, backendCount: number) =>
+      invoke<PortMapEntry[]>('network_proposed_ports', { hubPort, backendCount }),
+    networkSetAutoRestart: (networkId: string, enabled: boolean) =>
+      invoke<void>('network_set_auto_restart', { networkId, enabled }),
+    networkSetFavorite: (networkId: string, favorite: boolean) =>
+      invoke<void>('network_set_favorite', { networkId, favorite }),
+    networkExportDefinition: (networkId: string, destPath: string) =>
+      invoke<void>('network_export_definition', { networkId, destPath }),
+    networkUpdateBinaries: (networkId: string) =>
+      invoke<void>('network_update_binaries', { networkId }),
+    networkTemplatesList: () => invoke<NetworkTemplate[]>('network_templates_list'),
+    networkCreateFromTemplate: (templateId: string, name: string, hubPort?: number) =>
+      invoke<NetworkSummary>('network_create_from_template', {
+        templateId,
+        name,
+        hubPort: hubPort ?? null,
+      }),
+    javaValidate: () => invoke<string>('java_validate'),
+    cacheClear: () => invoke<number>('cache_clear'),
+    pluginApplyProfile: (
+      profileId: string,
+      instancePath: string,
+      serverRole: string,
+    ) =>
+      invoke<string[]>('plugin_apply_profile', { profileId, instancePath, serverRole }),
     networkConsoleSend: (networkId: string, request: { target: string; command: string }) =>
       invoke<{ output: string }>('network_console_send', { networkId, request }),
     settingsGet: () => invoke<AppSettings>('settings_get'),

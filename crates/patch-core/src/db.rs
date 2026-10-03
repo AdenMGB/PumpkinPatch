@@ -3,6 +3,7 @@ use crate::models::{AppSettings, NetworkRecord, ServerRecord};
 use chrono::Utc;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
+// Row used in list_health_snapshots and get_network_meta
 use std::path::Path;
 use std::str::FromStr;
 use uuid::Uuid;
@@ -52,6 +53,20 @@ pub struct Database {
 }
 
 impl Database {
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+
+    pub async fn append_audit(
+        &self,
+        action: &str,
+        entity_type: &str,
+        entity_id: Option<&str>,
+        detail: &str,
+    ) -> Result<()> {
+        crate::migrations::append_audit(&self.pool, action, entity_type, entity_id, detail).await
+    }
+
     pub async fn connect(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -64,6 +79,7 @@ impl Database {
             .connect_with(opts)
             .await?;
         sqlx::raw_sql(MIGRATION).execute(&pool).await?;
+        crate::migrations::run_migrations(&pool).await?;
         let _ = sqlx::query(
             "ALTER TABLE servers ADD COLUMN minecraft_version TEXT NOT NULL DEFAULT '1.21.4'",
         )
@@ -79,8 +95,8 @@ impl Database {
 
     pub async fn insert_network(&self, network: &NetworkRecord) -> Result<()> {
         sqlx::query(
-            "INSERT INTO networks (id, name, hub_type, hub_port, forwarding_secret, lobby_server_id, data_path, analytics_export_token, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO networks (id, name, hub_type, hub_port, forwarding_secret, lobby_server_id, data_path, analytics_export_token, auto_restart, last_crash_source, last_crash_at, restart_attempts, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(network.id.to_string())
         .bind(&network.name)
@@ -90,6 +106,10 @@ impl Database {
         .bind(network.lobby_server_id.map(|u| u.to_string()))
         .bind(&network.data_path)
         .bind(&network.analytics_export_token)
+        .bind(if network.auto_restart { 1 } else { 0 })
+        .bind(network.last_crash_source.as_deref())
+        .bind(network.last_crash_at.map(|t| t.to_rfc3339()))
+        .bind(network.restart_attempts as i64)
         .bind(network.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -197,6 +217,11 @@ impl Database {
                 "java_path" => settings.java_path = value,
                 "bind_host" => settings.bind_host = value,
                 "pumpkin_channel_default" => settings.pumpkin_channel_default = value,
+                "java_min_major" => {
+                    if let Ok(v) = value.parse() {
+                        settings.java_min_major = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -218,6 +243,7 @@ impl Database {
     }
 
     pub async fn save_settings(&self, settings: &AppSettings) -> Result<()> {
+        let java_min_major = settings.java_min_major.to_string();
         for (key, value) in [
             ("java_path", settings.java_path.as_str()),
             ("bind_host", settings.bind_host.as_str()),
@@ -225,6 +251,7 @@ impl Database {
                 "pumpkin_channel_default",
                 settings.pumpkin_channel_default.as_str(),
             ),
+            ("java_min_major", java_min_major.as_str()),
         ] {
             sqlx::query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
                 .bind(key)
@@ -251,6 +278,16 @@ fn network_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<NetworkRecord> {
     let analytics_export_token: String = row
         .try_get("analytics_export_token")
         .unwrap_or_default();
+    let auto_restart: i64 = row.try_get("auto_restart").unwrap_or(0);
+    let last_crash_source: Option<String> = row.try_get("last_crash_source").ok();
+    let last_crash_at: Option<String> = row.try_get("last_crash_at").ok();
+    let last_crash_at = last_crash_at
+        .filter(|s| !s.is_empty())
+        .map(|s| chrono::DateTime::parse_from_rfc3339(&s))
+        .transpose()
+        .map_err(|e| Error::Other(e.to_string()))?
+        .map(|t| t.with_timezone(&Utc));
+    let restart_attempts: i64 = row.try_get("restart_attempts").unwrap_or(0);
     Ok(NetworkRecord {
         id,
         name: row.get("name"),
@@ -260,8 +297,167 @@ fn network_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<NetworkRecord> {
         lobby_server_id,
         data_path: row.get("data_path"),
         analytics_export_token,
+        auto_restart: auto_restart != 0,
+        last_crash_source,
+        last_crash_at,
+        restart_attempts: restart_attempts as u32,
         created_at,
     })
+}
+
+impl Database {
+    pub async fn record_network_crash(
+        &self,
+        network_id: Uuid,
+        source: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE networks SET last_crash_source = ?, last_crash_at = ?, restart_attempts = restart_attempts + 1 WHERE id = ?",
+        )
+        .bind(source)
+        .bind(Utc::now().to_rfc3339())
+        .bind(network_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn set_network_auto_restart(&self, network_id: Uuid, enabled: bool) -> Result<()> {
+        sqlx::query("UPDATE networks SET auto_restart = ? WHERE id = ?")
+            .bind(if enabled { 1 } else { 0 })
+            .bind(network_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn reset_restart_attempts(&self, network_id: Uuid) -> Result<()> {
+        sqlx::query("UPDATE networks SET restart_attempts = 0 WHERE id = ?")
+            .bind(network_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn record_health_snapshot(
+        &self,
+        network_id: Uuid,
+        overall: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO health_snapshots (network_id, overall, recorded_at) VALUES (?, ?, ?)",
+        )
+        .bind(network_id.to_string())
+        .bind(overall)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_health_snapshots(
+        &self,
+        network_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<(String, String)>> {
+        let rows = sqlx::query(
+            "SELECT overall, recorded_at FROM health_snapshots WHERE network_id = ? ORDER BY id DESC LIMIT ?",
+        )
+        .bind(network_id.to_string())
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| (r.get("overall"), r.get("recorded_at")))
+            .collect())
+    }
+
+    pub async fn set_network_favorite(&self, network_id: Uuid, favorite: bool) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO network_meta (network_id, favorite) VALUES (?, ?)
+             ON CONFLICT(network_id) DO UPDATE SET favorite = excluded.favorite",
+        )
+        .bind(network_id.to_string())
+        .bind(if favorite { 1 } else { 0 })
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn touch_network_played(&self, network_id: Uuid) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO network_meta (network_id, last_played_at) VALUES (?, ?)
+             ON CONFLICT(network_id) DO UPDATE SET last_played_at = excluded.last_played_at",
+        )
+        .bind(network_id.to_string())
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_network_meta(
+        &self,
+        network_id: Uuid,
+    ) -> Result<(bool, Option<String>)> {
+        let row = sqlx::query(
+            "SELECT favorite, last_played_at FROM network_meta WHERE network_id = ?",
+        )
+        .bind(network_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .map(|r| {
+                (
+                    r.get::<i64, _>("favorite") != 0,
+                    r.get::<Option<String>, _>("last_played_at"),
+                )
+            })
+            .unwrap_or((false, None)))
+    }
+
+    pub async fn record_deployed_plugin(
+        &self,
+        plugin_id: &str,
+        instance_path: &str,
+        artifact_path: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO deployed_plugins (id, plugin_id, instance_path, artifact_path, deployed_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(plugin_id)
+        .bind(instance_path)
+        .bind(artifact_path)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_deployed_plugins_for_instance(
+        &self,
+        instance_path: &str,
+    ) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query(
+            "SELECT plugin_id, artifact_path, deployed_at FROM deployed_plugins WHERE instance_path = ? ORDER BY deployed_at DESC",
+        )
+        .bind(instance_path)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                (
+                    r.get("plugin_id"),
+                    r.get("artifact_path"),
+                    r.get("deployed_at"),
+                )
+            })
+            .collect())
+    }
 }
 
 fn server_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ServerRecord> {

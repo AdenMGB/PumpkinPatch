@@ -6,6 +6,8 @@ edition.workspace = true
 
 [dependencies]
 patch-analytics-protocol = { path = "../../plugins/patch-analytics-protocol" }
+patch-network-protocol = { path = "../../plugins/patch-network-protocol" }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 chrono = { version = "0.4", features = ["serde"] }
 directories = "6"
 rand = "0.9"

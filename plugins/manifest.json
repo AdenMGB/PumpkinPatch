@@ -7,7 +7,7 @@
       "description": "Lobby server selector scaffold — replace artifact with WASM build from patch-hub-lobby",
       "artifact": "artifacts/patch-hub-lobby.wasm",
       "targets": ["lobby"],
-      "auto_deploy": false
+      "auto_deploy": true
     },
     {
       "id": "patch-plan-analytics",

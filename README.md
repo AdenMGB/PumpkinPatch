@@ -7,7 +7,17 @@ Desktop hub for **PumpkinMC server networks**: Velocity proxy + Pumpkin lobby/ba
 - `crates/patch-core` — SQLite, downloads, `velocity.toml` / proxy config generation, process supervisor, ping
 - `src-tauri` — Tauri commands (`network_*`, `settings_*`, …)
 - `app/` — Nuxt 4 UI (`/library`, `/networks/new`, …)
-- `plugins/` — Standalone `patch-network-protocol` + `patch-hub-lobby` scaffold (WASM artifact via manifest)
+- `plugins/` — Bundled WASM (`patch-hub-lobby`, `patch-plan-analytics`), profiles, manifest
+
+## Platform matrix
+
+| Feature | Windows | Linux | macOS |
+|--------|---------|-------|-------|
+| Pumpkin download | Yes | Yes | Yes |
+| Tauri desktop build | Yes | CI | CI |
+| Auto-updater | Configure signing in release workflow | Same | Same |
+
+See `docs/operations.md` and `docs/hub-plugin.md`.
 
 ## Development
 

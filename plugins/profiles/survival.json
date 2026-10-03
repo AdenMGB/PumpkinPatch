@@ -1,0 +1,8 @@
+{
+  "id": "survival",
+  "name": "Survival stack",
+  "plugins": [
+    { "bundled_id": "patch-plan-analytics" },
+    { "bundled_id": "patch-hub-lobby", "targets": ["lobby"] }
+  ]
+}

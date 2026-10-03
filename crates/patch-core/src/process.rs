@@ -8,10 +8,11 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -21,12 +22,23 @@ pub struct LogLine {
     pub line: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessExitEvent {
+    pub network_id: Uuid,
+    pub source: String,
+    pub server_id: Option<Uuid>,
+    pub exit_code: Option<i32>,
+}
+
 struct ManagedPumpkin {
-    child: Child,
+    child: Arc<Mutex<Child>>,
+    server_id: Uuid,
+    name: String,
+    role: String,
 }
 
 struct ManagedHub {
-    child: Child,
+    child: Arc<Mutex<Child>>,
     stdin: Option<ChildStdin>,
 }
 
@@ -34,6 +46,8 @@ pub struct RunningNetwork {
     pub network_id: Uuid,
     hub: ManagedHub,
     servers: HashMap<Uuid, ManagedPumpkin>,
+    lobby_ids: Vec<Uuid>,
+    backend_ids: Vec<Uuid>,
 }
 
 pub struct ProcessSupervisor {
@@ -56,6 +70,10 @@ impl ProcessSupervisor {
             .unwrap_or(NetworkRuntimeStatus::Stopped)
     }
 
+    pub fn set_status(&mut self, network_id: Uuid, status: NetworkRuntimeStatus) {
+        self.statuses.insert(network_id, status);
+    }
+
     pub fn is_running(&self, network_id: Uuid) -> bool {
         self.running.contains_key(&network_id)
     }
@@ -70,6 +88,7 @@ impl ProcessSupervisor {
         bind_host: &str,
         orchestrator: &NetworkOrchestrator,
         log_tx: Option<mpsc::UnboundedSender<LogLine>>,
+        exit_tx: Option<mpsc::UnboundedSender<ProcessExitEvent>>,
     ) -> Result<()> {
         if self.running.contains_key(&network.id) {
             return Err(Error::InvalidState("network already running".into()));
@@ -84,6 +103,8 @@ impl ProcessSupervisor {
             .filter(|s| s.role == "backend")
             .collect();
         let lobbies: Vec<_> = servers.iter().filter(|s| s.role == "lobby").collect();
+        let backend_ids: Vec<Uuid> = backends.iter().map(|s| s.id).collect();
+        let lobby_ids: Vec<Uuid> = lobbies.iter().map(|s| s.id).collect();
 
         orchestrator.sync_network_instances(network, servers, bind_host)?;
 
@@ -95,8 +116,11 @@ impl ProcessSupervisor {
             &pumpkin_binary,
             &PathBuf::from(&lobby.data_path),
             &lobby.name,
+            lobby.id,
+            "lobby",
             network.id,
             log_tx.clone(),
+            exit_tx.clone(),
         )?;
         server_children.insert(lobby.id, lobby_child);
 
@@ -114,8 +138,11 @@ impl ProcessSupervisor {
                 &pumpkin_binary,
                 &PathBuf::from(&server.data_path),
                 &server.name,
+                server.id,
+                "backend",
                 network.id,
                 log_tx.clone(),
+                exit_tx.clone(),
             )?;
             server_children.insert(server.id, child);
             wait_for_tcp_port("127.0.0.1", server.game_port, Duration::from_secs(180))
@@ -135,8 +162,11 @@ impl ProcessSupervisor {
                 &pumpkin_binary,
                 &PathBuf::from(&extra.data_path),
                 &extra.name,
+                extra.id,
+                "lobby",
                 network.id,
                 log_tx.clone(),
+                exit_tx.clone(),
             )?;
             server_children.insert(extra.id, child);
         }
@@ -147,6 +177,7 @@ impl ProcessSupervisor {
             &hub_path,
             network.id,
             log_tx.clone(),
+            exit_tx.clone(),
         )?;
 
         self.running.insert(
@@ -155,27 +186,71 @@ impl ProcessSupervisor {
                 network_id: network.id,
                 hub,
                 servers: server_children,
+                lobby_ids,
+                backend_ids,
             },
         );
-        self.statuses.insert(network.id, NetworkRuntimeStatus::Running);
+        self.statuses
+            .insert(network.id, NetworkRuntimeStatus::Running);
         Ok(())
     }
 
-    pub async fn stop_network(&mut self, network_id: Uuid) -> Result<()> {
-        let running = self
+    pub async fn stop_network(
+        &mut self,
+        network_id: Uuid,
+        network: &NetworkRecord,
+        servers: &[ServerRecord],
+    ) -> Result<()> {
+        let mut running = self
             .running
             .remove(&network_id)
             .ok_or_else(|| Error::InvalidState("network not running".into()))?;
-        self.statuses.insert(network_id, NetworkRuntimeStatus::Stopping);
+        self.statuses
+            .insert(network_id, NetworkRuntimeStatus::Stopping);
 
-        for (_, mut managed) in running.servers {
-            let _ = managed.child.kill().await;
+        if let Some(mut stdin) = running.hub.stdin.take() {
+            let _ = stdin.write_all(b"shutdown\n").await;
+            let _ = stdin.flush().await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
         }
-        let mut hub = running.hub.child;
-        let _ = hub.kill().await;
 
-        self.statuses.insert(network_id, NetworkRuntimeStatus::Stopped);
+        for server_id in &running.backend_ids {
+            if let Some(server) = servers.iter().find(|s| s.id == *server_id) {
+                let port = rcon_port_for_game_port(server.game_port);
+                let password =
+                    rcon_password_for_server(&network.forwarding_secret, server.game_port);
+                let _ = send_rcon_command("127.0.0.1", port, &password, "stop").await;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        for server_id in &running.lobby_ids {
+            if let Some(server) = servers.iter().find(|s| s.id == *server_id) {
+                let port = rcon_port_for_game_port(server.game_port);
+                let password =
+                    rcon_password_for_server(&network.forwarding_secret, server.game_port);
+                let _ = send_rcon_command("127.0.0.1", port, &password, "stop").await;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        for (_, managed) in running.servers {
+            let mut guard = managed.child.lock().await;
+            let _ = guard.kill().await;
+        }
+        {
+            let mut guard = running.hub.child.lock().await;
+            let _ = guard.kill().await;
+        }
+
+        self.statuses
+            .insert(network_id, NetworkRuntimeStatus::Stopped);
         Ok(())
+    }
+
+    pub fn mark_error(&mut self, network_id: Uuid) {
+        self.statuses.insert(network_id, NetworkRuntimeStatus::Error);
+        self.running.remove(&network_id);
     }
 
     /// `target` is `"hub"` for Velocity, or a Pumpkin server UUID string.
@@ -239,8 +314,11 @@ fn spawn_pumpkin(
     binary: &PathBuf,
     cwd: &PathBuf,
     name: &str,
+    server_id: Uuid,
+    role: &str,
     network_id: Uuid,
     log_tx: Option<mpsc::UnboundedSender<LogLine>>,
+    exit_tx: Option<mpsc::UnboundedSender<ProcessExitEvent>>,
 ) -> Result<ManagedPumpkin> {
     let mut cmd = Command::new(binary);
     cmd.current_dir(cwd)
@@ -260,7 +338,20 @@ fn spawn_pumpkin(
         format!("pumpkin:{name}:err"),
         log_tx,
     );
-    Ok(ManagedPumpkin { child })
+    let child = Arc::new(Mutex::new(child));
+    spawn_exit_watcher(
+        child.clone(),
+        network_id,
+        format!("pumpkin:{name}"),
+        Some(server_id),
+        exit_tx,
+    );
+    Ok(ManagedPumpkin {
+        child,
+        server_id,
+        name: name.into(),
+        role: role.into(),
+    })
 }
 
 fn spawn_velocity(
@@ -269,6 +360,7 @@ fn spawn_velocity(
     cwd: &PathBuf,
     network_id: Uuid,
     log_tx: Option<mpsc::UnboundedSender<LogLine>>,
+    exit_tx: Option<mpsc::UnboundedSender<ProcessExitEvent>>,
 ) -> Result<ManagedHub> {
     let mut cmd = Command::new(java_path);
     cmd.arg("-jar")
@@ -291,7 +383,47 @@ fn spawn_velocity(
         "velocity:err".into(),
         log_tx,
     );
+    let child = Arc::new(Mutex::new(child));
+    spawn_exit_watcher(
+        child.clone(),
+        network_id,
+        "velocity".into(),
+        None,
+        exit_tx,
+    );
     Ok(ManagedHub { child, stdin })
+}
+
+fn spawn_exit_watcher(
+    child: Arc<Mutex<Child>>,
+    network_id: Uuid,
+    source: String,
+    server_id: Option<Uuid>,
+    exit_tx: Option<mpsc::UnboundedSender<ProcessExitEvent>>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            let mut guard = child.lock().await;
+            match guard.try_wait() {
+                Ok(Some(status)) => {
+                    let exit_code = status.code();
+                    drop(guard);
+                    if let Some(tx) = exit_tx {
+                        let _ = tx.send(ProcessExitEvent {
+                            network_id,
+                            source: source.clone(),
+                            server_id,
+                            exit_code,
+                        });
+                    }
+                    break;
+                }
+                Ok(None) => continue,
+                Err(_) => break,
+            }
+        }
+    });
 }
 
 fn pipe_logs<R: AsyncRead + Unpin + Send + 'static>(
