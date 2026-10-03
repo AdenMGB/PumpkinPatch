@@ -142,6 +142,43 @@ export interface InstalledPlugin {
   size_bytes: number
 }
 
+export interface PlayerAnalyticsRow {
+  uuid: string
+  name: string
+  join_count: number
+  playtime_secs: number
+  last_seen_unix: number
+}
+
+export interface ActivityPoint {
+  t: number
+  online: number
+}
+
+export interface ServerAnalyticsSnapshot {
+  server_id: string
+  server_name: string
+  generated_at_unix: number
+  online_now: number
+  peak_online: number
+  total_joins: number
+  unique_players: number
+  total_playtime_secs: number
+  top_players: PlayerAnalyticsRow[]
+  activity_samples: ActivityPoint[]
+  stale: boolean
+}
+
+export interface NetworkAnalyticsOverview {
+  network_id: string
+  network_name: string
+  combined_online: number
+  combined_unique_players: number
+  combined_total_joins: number
+  combined_playtime_secs: number
+  servers: ServerAnalyticsSnapshot[]
+}
+
 export interface AddBackendRequest {
   name: string
   minecraft_version?: string

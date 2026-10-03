@@ -1,4 +1,5 @@
 mod api;
+mod bundled_plugins;
 mod plugins_root;
 mod state;
 
@@ -30,6 +31,7 @@ pub fn run() {
             api::console::network_console_send,
             api::network::plugin_list_available,
             api::network::plugin_deploy,
+            api::analytics::analytics_network_overview,
             api::settings::settings_get,
             api::settings::settings_set,
             api::ping::server_ping,

@@ -14,6 +14,8 @@ pub struct PluginManifestEntry {
     pub description: String,
     pub artifact: String,
     pub targets: Vec<String>,
+    #[serde(default)]
+    pub auto_deploy: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -95,4 +97,28 @@ pub fn deploy_plugin(
     let dest = copy_plugin_artifact(&source, &plugins_dir, &filename)?;
     cache_bundled_plugin(cache_dir, &entry.id, &entry.version, &source)?;
     Ok(dest)
+}
+
+pub fn deploy_auto_plugins_for_server(
+    plugins_root: &Path,
+    manifest: &PluginManifest,
+    server: &crate::models::ServerRecord,
+    instance_path: &Path,
+    cache_dir: &Path,
+) -> Result<Vec<PathBuf>> {
+    let mut deployed = Vec::new();
+    for entry in &manifest.plugins {
+        if !entry.auto_deploy {
+            continue;
+        }
+        let dest = deploy_plugin(
+            plugins_root,
+            entry,
+            instance_path,
+            cache_dir,
+            Some(server.role.as_str()),
+        )?;
+        deployed.push(dest);
+    }
+    Ok(deployed)
 }

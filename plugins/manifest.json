@@ -6,7 +6,17 @@
       "version": "0.1.0",
       "description": "Lobby server selector scaffold — replace artifact with WASM build from patch-hub-lobby",
       "artifact": "artifacts/patch-hub-lobby.wasm",
-      "targets": ["lobby"]
+      "targets": ["lobby"],
+      "auto_deploy": false
+    },
+    {
+      "id": "patch-plan-analytics",
+      "name": "Patch Plan",
+      "version": "0.1.0",
+      "description": "Plan-inspired player analytics for Pumpkin Patch (joins, playtime, activity samples)",
+      "artifact": "artifacts/patch-plan-analytics.wasm",
+      "targets": ["lobby", "backend"],
+      "auto_deploy": true
     }
   ]
 }

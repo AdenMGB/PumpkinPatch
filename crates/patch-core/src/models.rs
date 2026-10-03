@@ -70,6 +70,7 @@ pub struct NetworkRecord {
     pub forwarding_secret: String,
     pub lobby_server_id: Option<Uuid>,
     pub data_path: String,
+    pub analytics_export_token: String,
     pub created_at: DateTime<Utc>,
 }
 

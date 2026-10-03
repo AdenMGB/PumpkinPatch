@@ -2,6 +2,7 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use thiserror::Error as ThisError;
 
+pub mod analytics;
 pub mod catalog;
 pub mod console;
 pub mod network;
