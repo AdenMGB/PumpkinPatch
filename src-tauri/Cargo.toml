@@ -3,7 +3,7 @@ name = "pumpkin-patch"
 version = "0.1.0"
 description = "Pumpkin Patch desktop app"
 authors = ["you"]
-edition = "2021"
+edition.workspace = true
 
 [lib]
 name = "pumpkin_patch_lib"
@@ -13,14 +13,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+patch-core = { path = "../crates/patch-core" }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-os = "2"
+tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
-panic = "abort"
-strip = true
+thiserror = "2"
+tokio = { version = "1", features = ["sync"] }
+uuid = { version = "1", features = ["serde"] }

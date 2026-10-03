@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/patch-core",
+    "plugins/patch-network-protocol",
+    "plugins/patch-hub-lobby",
+    "src-tauri",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

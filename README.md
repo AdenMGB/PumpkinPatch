@@ -1,34 +1,29 @@
 # Pumpkin Patch
 
-Desktop app built with **Nuxt** (Vue) and **Tauri v2** in one project folder (`PumpkinPatch/`) — Nuxt at the app root and Rust in `src-tauri/`.
+Desktop hub for **PumpkinMC server networks**: Velocity proxy + Pumpkin lobby/backends, managed from a Modrinth-inspired Nuxt + Tauri app.
 
-## Prerequisites
+## Architecture
 
-- [Node.js](https://nodejs.org/) (LTS)
-- [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/tools/install)
-- Platform [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+- `crates/patch-core` — SQLite, downloads, `velocity.toml` / proxy config generation, process supervisor, ping
+- `src-tauri` — Tauri commands (`network_*`, `settings_*`, …)
+- `app/` — Nuxt 4 UI (`/library`, `/networks/new`, …)
+- `plugins/` — Standalone `patch-network-protocol` + `patch-hub-lobby` scaffold (WASM artifact via manifest)
 
 ## Development
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev          # Tauri + Nuxt on :1420
 ```
-
-Runs `tauri dev`, which starts Nuxt on port **1420** and opens the desktop window.
-
-## Build
 
 ```bash
-pnpm build
+cargo test -p patch-core
 ```
 
-## Scripts
+## Join flow
 
-| Script | Description |
-|--------|-------------|
-| `pnpm dev` | Tauri dev (Nuxt + Rust) |
-| `pnpm build` | Production desktop bundle |
-| `pnpm frontend:dev` | Nuxt only (browser) |
-| `pnpm frontend:build` | Nuxt production build (`.output/public`) |
+1. Create a network (hub port + backends).
+2. Start the network (downloads Pumpkin + Velocity on first run).
+3. Players join **`bind_host:hub_port`** (default `127.0.0.1:25565`).
+
+Configure Java path for Velocity under **Settings**.

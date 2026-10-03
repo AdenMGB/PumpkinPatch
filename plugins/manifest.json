@@ -1,0 +1,12 @@
+{
+  "plugins": [
+    {
+      "id": "patch-hub-lobby",
+      "name": "Pumpkin Patch Hub Lobby",
+      "version": "0.1.0",
+      "description": "Lobby server selector scaffold — replace artifact with WASM build from patch-hub-lobby",
+      "artifact": "artifacts/patch-hub-lobby.wasm",
+      "targets": ["lobby"]
+    }
+  ]
+}

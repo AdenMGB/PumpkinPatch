@@ -1,0 +1,13 @@
+[package]
+name = "patch-hub-lobby"
+version = "0.1.0"
+edition.workspace = true
+description = "Pumpkin Patch lobby plugin (scaffold — build against Pumpkin plugin SDK when pinning versions)"
+
+[dependencies]
+patch-network-protocol = { path = "../patch-network-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lib]
+path = "src/lib.rs"

@@ -14,8 +14,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Tauri / Rust
-src-tauri/target
+# Tauri / Rust (workspace root + legacy src-tauri layout)
+target/
+src-tauri/target/
+**/target/
+
+# Tauri generated
+src-tauri/gen/
 
 # Editor
 .vscode/*

@@ -1,6 +1,9 @@
+import tailwindcss from '@tailwindcss/vite'
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   compatibilityDate: '2025-10-01',
+  css: ['~/assets/css/tailwind.css', '~/assets/css/shell.css'],
   ssr: false,
   devtools: { enabled: true },
   devServer: {
@@ -8,6 +11,7 @@ export default defineNuxtConfig({
     strictPort: true,
   },
   vite: {
+    plugins: [tailwindcss()],
     clearScreen: false,
     envPrefix: ['VITE_', 'TAURI_'],
     server: {
