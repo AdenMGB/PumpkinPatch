@@ -103,7 +103,7 @@ pub fn detect_java_candidates() -> Vec<PathBuf> {
     #[cfg(not(windows))]
     {
         for base in ["/usr/lib/jvm", "/opt/homebrew/opt", "/Library/Java/JavaVirtualMachines"] {
-            scan_versioned_dirs(&mut out, Path::new(base));
+            scan_versioned_dirs(&mut out, Path::new(base).to_path_buf());
         }
     }
 

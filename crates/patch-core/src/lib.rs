@@ -11,6 +11,7 @@ mod modrinth;
 mod models;
 mod network;
 mod ping;
+mod plugin_install;
 mod plugins;
 mod port_wait;
 mod process;
@@ -39,6 +40,7 @@ pub use server_settings::{
 pub use models::*;
 pub use network::NetworkOrchestrator;
 pub use ping::ping_server;
+pub use plugin_install::discover_plugins_root;
 pub use plugins::{deploy_plugin, PluginManifest, PluginManifestEntry};
 pub use process::{LogLine, ProcessSupervisor};
 pub use pumpkin_market::{

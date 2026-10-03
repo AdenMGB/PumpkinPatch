@@ -67,7 +67,7 @@ pub async fn network_create(
         .create_network(&inner.db, &settings, request)
         .await?;
 
-    try_deploy_lobby_plugin(&inner, &summary).await;
+    deploy_lobby_plugin_if_configured(&state, &inner, &summary);
 
     let _ = app.emit("network-created", &summary.network.id);
     Ok(summary)
@@ -169,9 +169,10 @@ pub async fn network_ping_hub(
 
 #[tauri::command]
 pub async fn plugin_list_available(
-    _state: tauri::State<'_, AppStateHandle>,
+    state: tauri::State<'_, AppStateHandle>,
 ) -> Result<Vec<PluginManifestEntry>> {
-    let manifest = PluginManifest::load_from_repo(&plugins_root())?;
+    let root = state.plugins_root();
+    let manifest = PluginManifest::load_from_repo(&root)?;
     Ok(manifest.plugins)
 }
 
@@ -180,43 +181,57 @@ pub async fn plugin_deploy(
     state: tauri::State<'_, AppStateHandle>,
     plugin_id: String,
     instance_path: String,
+    server_role: Option<String>,
 ) -> Result<String> {
     let inner = state.get().await?;
-    let manifest = PluginManifest::load_from_repo(&plugins_root())?;
+    let root = state.plugins_root();
+    let manifest = PluginManifest::load_from_repo(&root)?;
     let entry = manifest
         .get(&plugin_id)
         .ok_or_else(|| patch_core::Error::NotFound(plugin_id.clone()))?;
     let dest = deploy_plugin(
-        &plugins_root(),
+        &root,
         entry,
-        PathBuf::from(instance_path).as_path(),
+        PathBuf::from(&instance_path).as_path(),
         &inner.dirs.plugins_cache,
+        server_role.as_deref(),
     )?;
     Ok(dest.to_string_lossy().into())
 }
 
-async fn try_deploy_lobby_plugin(inner: &patch_core::AppState, summary: &NetworkSummary) {
-    let lobby = summary
+fn deploy_lobby_plugin_if_configured(
+    state: &AppStateHandle,
+    inner: &patch_core::AppState,
+    summary: &NetworkSummary,
+) {
+    let Some(lobby) = summary
         .servers
         .iter()
         .find(|s| s.role == "lobby")
-        .cloned();
-    if let Some(lobby) = lobby {
-        if let Ok(manifest) = PluginManifest::load_from_repo(&plugins_root()) {
-            if let Some(entry) = manifest.get("patch-hub-lobby") {
-                let _ = deploy_plugin(
-                    &plugins_root(),
-                    entry,
-                    PathBuf::from(&lobby.data_path).as_path(),
-                    &inner.dirs.plugins_cache,
-                );
-            }
-        }
-    }
-}
+        .cloned()
+    else {
+        return;
+    };
 
-fn plugins_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("plugins")
+    let root = state.plugins_root();
+    let Ok(manifest) = PluginManifest::load_from_repo(&root) else {
+        eprintln!("[patch] failed to load bundled plugin manifest at {}", root.display());
+        return;
+    };
+    let Some(entry) = manifest.get("patch-hub-lobby") else {
+        return;
+    };
+
+    if let Err(err) = deploy_plugin(
+        &root,
+        entry,
+        PathBuf::from(&lobby.data_path).as_path(),
+        &inner.dirs.plugins_cache,
+        Some("lobby"),
+    ) {
+        eprintln!(
+            "[patch] lobby plugin deploy failed for {}: {err}",
+            lobby.name
+        );
+    }
 }

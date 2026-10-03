@@ -1,4 +1,5 @@
 use crate::error::{Error, Result};
+use crate::plugin_install::is_plugin_artifact_filename;
 use crate::server_settings::instance_plugins_dir;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -26,7 +27,7 @@ pub fn list_installed_plugins(instance_path: &Path) -> Result<Vec<InstalledPlugi
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
-        if !is_plugin_artifact(&name) {
+        if !is_plugin_artifact_filename(&name) {
             continue;
         }
         let size = entry.metadata()?.len();
@@ -51,7 +52,3 @@ pub fn remove_installed_plugin(instance_path: &Path, filename: &str) -> Result<(
     Ok(())
 }
 
-fn is_plugin_artifact(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".jar") || lower.ends_with(".wasm")
-}
