@@ -1,7 +1,9 @@
 mod api;
+mod plugins_root;
 mod state;
 
 use state::AppStateHandle;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,6 +12,11 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(AppStateHandle::new())
+        .setup(|app| {
+            let handle = app.state::<AppStateHandle>();
+            handle.set_plugins_root(plugins_root::resolve(app.handle()));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             api::network::initialize_state,
             api::network::network_list,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { ArrowDownTrayIcon, MagnifyingGlassIcon } from '@heroicons/vue/24/outline'
 import type { ServerRecord } from '~/types/patch'
 
@@ -11,10 +11,6 @@ const api = usePatchApi()
 const queryClient = useQueryClient()
 const query = ref('')
 const debouncedQuery = ref('')
-const nextCursor = ref<string | null>(null)
-const items = ref<
-  import('~/types/patch').PumpkinMarketPluginSummary[]
->([])
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(query, (q) => {
@@ -24,39 +20,53 @@ watch(query, (q) => {
   }, 350)
 })
 
-const { isFetching } = useQuery({
+const {
+  data: marketPages,
+  isFetching,
+  isFetchingNextPage,
+  fetchNextPage,
+  hasNextPage,
+} = useInfiniteQuery({
   queryKey: ['pumpkin-market', debouncedQuery],
-  queryFn: async () => {
-    const res = await api.pumpkinMarketList(debouncedQuery.value, 12)
-    items.value = res.items
-    nextCursor.value = res.next_cursor
-    return res
-  },
+  queryFn: ({ pageParam }) =>
+    api.pumpkinMarketList(debouncedQuery.value, 12, pageParam ?? undefined),
+  initialPageParam: null as string | null,
+  getNextPageParam: (last) => last.next_cursor,
 })
 
-async function loadMore() {
-  if (!nextCursor.value) return
-  const res = await api.pumpkinMarketList(
-    debouncedQuery.value,
-    12,
-    nextCursor.value,
-  )
-  items.value = [...items.value, ...res.items]
-  nextCursor.value = res.next_cursor
-}
+const items = computed(
+  () => marketPages.value?.pages.flatMap((page) => page.items) ?? [],
+)
 
 const { data: installed, refetch: refetchInstalled } = useQuery({
   queryKey: ['server-plugins', props.server.id],
   queryFn: () => api.serverListPlugins(props.server.id),
 })
 
+const installingId = ref<number | null>(null)
+const installError = ref<string | null>(null)
+
 const installMutation = useMutation({
-  mutationFn: (pluginId: number) =>
-    api.pumpkinMarketInstall(pluginId, props.server.data_path),
+  mutationFn: async (pluginId: number) => {
+    installingId.value = pluginId
+    installError.value = null
+    return api.pumpkinMarketInstall(pluginId, props.server.data_path)
+  },
   onSuccess: () => {
     refetchInstalled()
     queryClient.invalidateQueries({ queryKey: ['server-plugins', props.server.id] })
   },
+  onError: (err: Error) => {
+    installError.value = err.message || 'Install failed'
+  },
+  onSettled: () => {
+    installingId.value = null
+  },
+})
+
+const removeMutation = useMutation({
+  mutationFn: (filename: string) => api.serverRemovePlugin(props.server.id, filename),
+  onSuccess: () => refetchInstalled(),
 })
 
 function shortDescription(text: string, max = 160) {
@@ -68,6 +78,16 @@ function shortDescription(text: string, max = 160) {
 function priceLabel(cents: number, type: string) {
   if (type === 'free' || cents === 0) return 'Free'
   return `$${(cents / 100).toFixed(2)}`
+}
+
+function formatBytes(n: number) {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function canInstall(hit: { type: string; price_cents: number }) {
+  return hit.type === 'free' || hit.price_cents === 0
 }
 </script>
 
@@ -90,7 +110,15 @@ function priceLabel(cents: number, type: string) {
       <ul v-else class="installed-list">
         <li v-for="p in installed" :key="p.path" class="installed-row">
           <span class="installed-name">{{ p.filename }}</span>
-          <span class="pp-muted">{{ (p.size_bytes / 1024).toFixed(1) }} KB</span>
+          <span class="pp-muted">{{ formatBytes(p.size_bytes) }}</span>
+          <PpButton
+            size="sm"
+            variant="danger"
+            :loading="removeMutation.isPending.value"
+            @click="removeMutation.mutate(p.filename)"
+          >
+            Remove
+          </PpButton>
         </li>
       </ul>
     </PpCard>
@@ -99,6 +127,8 @@ function priceLabel(cents: number, type: string) {
       <MagnifyingGlassIcon class="search-ico" aria-hidden="true" />
       <PpInput v-model="query" label="Search Pumpkin Market" placeholder="TPS, void, economy…" />
     </div>
+
+    <p v-if="installError" class="install-error" role="alert">{{ installError }}</p>
 
     <p v-if="isFetching && !items.length" class="pp-muted">Loading market…</p>
 
@@ -121,23 +151,40 @@ function priceLabel(cents: number, type: string) {
           </div>
           <p class="hit-desc pp-muted">{{ shortDescription(hit.description) }}</p>
           <p class="hit-foot pp-muted">
-            {{ hit.dev_name }} · v{{ hit.version || '?' }} · {{ hit.downloads }} downloads
+            {{ hit.dev_name }} · v{{ hit.version || '?' }} ·
+            {{ hit.downloads.toLocaleString() }} downloads
           </p>
         </div>
         <PpButton
+          v-if="canInstall(hit)"
           size="sm"
-          :loading="installMutation.isPending.value"
-          :disabled="hit.type !== 'free' && hit.price_cents > 0"
+          :loading="installingId === hit.id"
+          :disabled="installMutation.isPending.value && installingId !== hit.id"
           @click="installMutation.mutate(hit.id)"
         >
           <ArrowDownTrayIcon class="btn-ico" aria-hidden="true" />
           Install
         </PpButton>
+        <PpButton
+          v-else
+          size="sm"
+          variant="secondary"
+          disabled
+          title="Purchase on market.pumpkinmc.org first"
+        >
+          Purchase required
+        </PpButton>
       </article>
     </div>
 
-    <div v-if="nextCursor" class="more-row">
-      <PpButton variant="secondary" :loading="isFetching" @click="loadMore">Load more</PpButton>
+    <div v-if="hasNextPage" class="more-row">
+      <PpButton
+        variant="secondary"
+        :loading="isFetchingNextPage"
+        @click="fetchNextPage()"
+      >
+        Load more
+      </PpButton>
     </div>
   </div>
 </template>
@@ -170,13 +217,19 @@ function priceLabel(cents: number, type: string) {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.5rem;
 }
 .installed-row {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  flex-wrap: wrap;
   font-size: 0.85rem;
+}
+.installed-name {
+  font-family: ui-monospace, monospace;
+  flex: 1;
 }
 .search-row {
   display: flex;
@@ -192,6 +245,11 @@ function priceLabel(cents: number, type: string) {
   margin-bottom: 0.55rem;
   color: var(--color-text-muted);
   flex-shrink: 0;
+}
+.install-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-danger, #e74c3c);
 }
 .hits {
   display: flex;

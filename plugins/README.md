@@ -16,4 +16,4 @@ cargo build -p patch-hub-lobby
 
 ## App deploy
 
-The app reads `manifest.json` and copies listed artifacts into each instance `plugins/` folder when creating a network lobby.
+The desktop app bundles this directory as Tauri resources (`plugins/`). At runtime it loads `manifest.json` from the bundle (or from this repo path in dev), validates artifact paths, and copies listed WASM/JAR files into each instance `plugins/` folder when creating a network lobby (respecting each entry's `targets` list).

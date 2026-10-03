@@ -1,11 +1,10 @@
 use crate::error::{Error, Result};
-use crate::java::FILL_USER_AGENT;
-use crate::server_settings::instance_plugins_dir;
-use futures_util::StreamExt;
+use crate::plugin_install::{
+    build_http_client, download_plugin_to_instance, install_filename_from_market_detail,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
+use std::path::Path;
 
 const MARKET_BASE: &str = "https://market.pumpkinmc.org";
 
@@ -52,13 +51,17 @@ pub struct PumpkinMarketClient {
     http: reqwest::Client,
 }
 
+impl Default for PumpkinMarketClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PumpkinMarketClient {
     pub fn new() -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(FILL_USER_AGENT)
-            .build()
-            .expect("pumpkin market http client");
-        Self { http }
+        Self {
+            http: build_http_client(),
+        }
     }
 
     pub async fn list_plugins(
@@ -67,31 +70,30 @@ impl PumpkinMarketClient {
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<PumpkinMarketListResult> {
-        let mut url = format!(
-            "{}/api/plugins?limit={}&paginated=true",
-            MARKET_BASE,
-            limit.min(48)
-        );
-        if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
-            url.push_str(&format!("&search={}", urlencoding(q.trim())));
+        let limit = limit.clamp(1, 48);
+        let mut url = reqwest::Url::parse(&format!("{MARKET_BASE}/api/plugins"))
+            .map_err(|e| Error::Other(e.to_string()))?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("limit", &limit.to_string());
+            pairs.append_pair("paginated", "true");
+            if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
+                pairs.append_pair("search", q.trim());
+            }
+            if let Some(c) = cursor.filter(|s| !s.is_empty()) {
+                pairs.append_pair("cursor", c);
+            }
         }
-        if let Some(c) = cursor.filter(|s| !s.is_empty()) {
-            url.push_str(&format!("&cursor={}", urlencoding(c)));
-        }
-        let raw: MarketListResponse = self.get_json(&url).await?;
+        let raw: MarketListResponse = self.get_json(url.as_str()).await?;
         Ok(PumpkinMarketListResult {
-            items: raw
-                .items
-                .into_iter()
-                .map(map_list_item)
-                .collect(),
+            items: raw.items.into_iter().map(map_list_item).collect(),
             has_more: raw.has_more,
             next_cursor: raw.next_cursor,
         })
     }
 
     pub async fn get_plugin(&self, plugin_id: u64) -> Result<PumpkinMarketPluginDetail> {
-        let url = format!("{}/api/plugins/{}", MARKET_BASE, plugin_id);
+        let url = format!("{MARKET_BASE}/api/plugins/{plugin_id}");
         let raw: MarketPluginDetailRaw = self.get_json(&url).await?;
         Ok(map_detail(raw))
     }
@@ -102,17 +104,28 @@ impl PumpkinMarketClient {
         instance_path: &Path,
     ) -> Result<String> {
         let detail = self.get_plugin(plugin_id).await?;
-        if detail.r#type != "free" && detail.price_cents > 0 && detail.owned != Some(true) {
-            return Err(Error::Other(
-                "This plugin requires purchase on market.pumpkinmc.org before download.".into(),
-            ));
+        ensure_plugin_downloadable(&detail)?;
+
+        let filename = install_filename_from_market_detail(
+            detail.wasm_path.as_deref(),
+            &detail.name,
+            detail.id,
+        );
+        let url = format!("{MARKET_BASE}/api/plugins/{plugin_id}/download");
+        let dest = download_plugin_to_instance(&self.http, &url, instance_path, &filename, true)
+            .await?;
+
+        if let Some(expected) = detail.file_size {
+            let actual = std::fs::metadata(&dest)?.len();
+            if expected > 0 && actual != expected {
+                std::fs::remove_file(&dest).ok();
+                return Err(Error::InvalidState(format!(
+                    "download size mismatch for {} (expected {expected}, got {actual})",
+                    detail.name
+                )));
+            }
         }
-        let filename = install_filename(&detail);
-        let plugins_dir = instance_plugins_dir(instance_path);
-        std::fs::create_dir_all(&plugins_dir)?;
-        let dest = plugins_dir.join(&filename);
-        let url = format!("{}/api/plugins/{}/download", MARKET_BASE, plugin_id);
-        self.download_file(&url, &dest).await?;
+
         Ok(dest.to_string_lossy().into())
     }
 
@@ -125,52 +138,20 @@ impl PumpkinMarketClient {
         }
         serde_json::from_str(&body).map_err(|e| Error::Other(format!("Pumpkin Market JSON: {e}")))
     }
-
-    async fn download_file(&self, url: &str, dest: &Path) -> Result<()> {
-        let response = self.http.get(url).send().await?;
-        if !response.status().is_success() {
-            let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            return Err(Error::Other(format!(
-                "Pumpkin Market download failed ({status}): {body}"
-            )));
-        }
-        let mut stream = response.bytes_stream();
-        let mut file = tokio::fs::File::create(dest).await?;
-        while let Some(chunk) = stream.next().await {
-            file.write_all(&chunk?).await?;
-        }
-        file.flush().await?;
-        Ok(())
-    }
 }
 
-fn install_filename(detail: &PumpkinMarketPluginDetail) -> String {
-    if let Some(path) = &detail.wasm_path {
-        let name = PathBuf::from(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned());
-        if let Some(n) = name.filter(|n| n.ends_with(".wasm")) {
-            return n;
-        }
+fn ensure_plugin_downloadable(detail: &PumpkinMarketPluginDetail) -> Result<()> {
+    let is_free = detail.r#type.eq_ignore_ascii_case("free") || detail.price_cents == 0;
+    if is_free {
+        return Ok(());
     }
-    let slug: String = detail
-        .name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let slug = slug.trim_matches('-');
-    if slug.is_empty() {
-        format!("plugin-{}.wasm", detail.id)
-    } else {
-        format!("{slug}.wasm")
+    if detail.owned == Some(true) {
+        return Ok(());
     }
+    Err(Error::Other(format!(
+        "Purchase \"{}\" on market.pumpkinmc.org before installing in Pumpkin Patch.",
+        detail.name
+    )))
 }
 
 fn map_list_item(raw: MarketPluginSummaryRaw) -> PumpkinMarketPluginSummary {
@@ -210,13 +191,10 @@ fn map_detail(raw: MarketPluginDetailRaw) -> PumpkinMarketPluginDetail {
 fn pick_description(translated: &HashMap<String, String>) -> String {
     translated
         .get("en-US")
+        .or_else(|| translated.get("en"))
         .or_else(|| translated.values().next())
         .cloned()
         .unwrap_or_default()
-}
-
-fn urlencoding(s: &str) -> String {
-    urlencoding::encode(s).to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -256,4 +234,49 @@ struct MarketPluginDetailRaw {
     file_size: Option<u64>,
     translated_descriptions: HashMap<String, String>,
     owned: Option<bool>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn free_plugins_always_downloadable() {
+        let detail = PumpkinMarketPluginDetail {
+            id: 1,
+            name: "Test".into(),
+            version: "1".into(),
+            category: "Other".into(),
+            dev_name: "dev".into(),
+            downloads: 0,
+            preview_path: None,
+            price_cents: 0,
+            r#type: "free".into(),
+            wasm_path: None,
+            file_size: None,
+            description: String::new(),
+            owned: None,
+        };
+        assert!(ensure_plugin_downloadable(&detail).is_ok());
+    }
+
+    #[test]
+    fn paid_requires_ownership() {
+        let detail = PumpkinMarketPluginDetail {
+            id: 1,
+            name: "Paid".into(),
+            version: "1".into(),
+            category: "Other".into(),
+            dev_name: "dev".into(),
+            downloads: 0,
+            preview_path: None,
+            price_cents: 500,
+            r#type: "paid".into(),
+            wasm_path: None,
+            file_size: None,
+            description: String::new(),
+            owned: None,
+        };
+        assert!(ensure_plugin_downloadable(&detail).is_err());
+    }
 }

@@ -1,4 +1,8 @@
 use crate::error::{Error, Result};
+use crate::plugin_install::{
+    cache_bundled_plugin, copy_plugin_artifact, resolve_bundled_artifact,
+};
+use crate::server_settings::instance_plugins_dir;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -24,11 +28,37 @@ impl PluginManifest {
             return Ok(Self { plugins: vec![] });
         }
         let data = std::fs::read_to_string(path)?;
-        Ok(serde_json::from_str(&data)?)
+        let manifest: Self = serde_json::from_str(&data)?;
+        manifest.validate()?;
+        Ok(manifest)
     }
 
     pub fn get(&self, id: &str) -> Option<&PluginManifestEntry> {
         self.plugins.iter().find(|p| p.id == id)
+    }
+
+    fn validate(&self) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for entry in &self.plugins {
+            if entry.id.trim().is_empty() {
+                return Err(Error::InvalidState(
+                    "plugin manifest entry missing id".into(),
+                ));
+            }
+            if !seen.insert(entry.id.clone()) {
+                return Err(Error::InvalidState(format!(
+                    "duplicate plugin id in manifest: {}",
+                    entry.id
+                )));
+            }
+            if entry.artifact.trim().is_empty() {
+                return Err(Error::InvalidState(format!(
+                    "plugin {} missing artifact path",
+                    entry.id
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -37,24 +67,32 @@ pub fn deploy_plugin(
     entry: &PluginManifestEntry,
     instance_path: &Path,
     cache_dir: &Path,
+    target_role: Option<&str>,
 ) -> Result<PathBuf> {
-    let source = plugins_root.join(&entry.artifact);
+    if let Some(role) = target_role {
+        if !entry.targets.is_empty() && !entry.targets.iter().any(|t| t == role) {
+            return Err(Error::InvalidState(format!(
+                "plugin {} is not configured for role '{role}'",
+                entry.id
+            )));
+        }
+    }
+
+    let source = resolve_bundled_artifact(plugins_root, &entry.artifact)?;
     if !source.exists() {
         return Err(Error::NotFound(format!(
             "plugin artifact missing: {}",
             source.display()
         )));
     }
-    let plugins_dir = instance_path.join("plugins");
-    std::fs::create_dir_all(&plugins_dir)?;
+
     let filename = source
         .file_name()
-        .map(|f| f.to_owned())
-        .unwrap_or_else(|| format!("{}.wasm", entry.id).into());
-    let dest = plugins_dir.join(filename);
-    std::fs::copy(&source, &dest)?;
-    std::fs::create_dir_all(cache_dir)?;
-    let cached = cache_dir.join(format!("{}-{}", entry.id, entry.version));
-    std::fs::copy(&source, cached)?;
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| format!("{}.wasm", entry.id));
+
+    let plugins_dir = instance_plugins_dir(instance_path);
+    let dest = copy_plugin_artifact(&source, &plugins_dir, &filename)?;
+    cache_bundled_plugin(cache_dir, &entry.id, &entry.version, &source)?;
     Ok(dest)
 }

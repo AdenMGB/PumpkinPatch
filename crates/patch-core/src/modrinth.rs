@@ -1,10 +1,7 @@
 use crate::error::{Error, Result};
-use crate::java::FILL_USER_AGENT;
-use crate::server_settings::instance_plugins_dir;
-use futures_util::StreamExt;
+use crate::plugin_install::{build_http_client, download_plugin_to_instance};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModrinthSearchHit {
@@ -44,13 +41,17 @@ pub struct ModrinthClient {
     http: reqwest::Client,
 }
 
+impl Default for ModrinthClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ModrinthClient {
     pub fn new() -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(FILL_USER_AGENT)
-            .build()
-            .expect("modrinth http client");
-        Self { http }
+        Self {
+            http: build_http_client(),
+        }
     }
 
     pub async fn search_plugins(
@@ -122,10 +123,15 @@ impl ModrinthClient {
             .find(|f| f.primary)
             .or_else(|| version.files.first())
             .ok_or_else(|| Error::Other("version has no downloadable files".into()))?;
-        let plugins_dir = instance_plugins_dir(instance_path);
-        std::fs::create_dir_all(&plugins_dir)?;
-        let dest = plugins_dir.join(&file.filename);
-        self.download_file(&file.url, &dest).await?;
+        let validate_wasm = file.filename.to_ascii_lowercase().ends_with(".wasm");
+        let dest = download_plugin_to_instance(
+            &self.http,
+            &file.url,
+            instance_path,
+            &file.filename,
+            validate_wasm,
+        )
+        .await?;
         Ok(dest.to_string_lossy().into())
     }
 
@@ -137,23 +143,6 @@ impl ModrinthClient {
             return Err(Error::Other(format!("Modrinth API {status}: {body}")));
         }
         serde_json::from_str(&body).map_err(|e| Error::Other(format!("Modrinth JSON: {e}")))
-    }
-
-    async fn download_file(&self, url: &str, dest: &Path) -> Result<()> {
-        let response = self.http.get(url).send().await?;
-        if !response.status().is_success() {
-            return Err(Error::Other(format!(
-                "Modrinth download failed: {}",
-                response.status()
-            )));
-        }
-        let mut stream = response.bytes_stream();
-        let mut file = tokio::fs::File::create(dest).await?;
-        while let Some(chunk) = stream.next().await {
-            file.write_all(&chunk?).await?;
-        }
-        file.flush().await?;
-        Ok(())
     }
 }
 
