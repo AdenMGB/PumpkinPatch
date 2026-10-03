@@ -1,0 +1,17 @@
+[package]
+name = "patch-plan-analytics"
+version = "0.2.0"
+edition = "2021"
+description = "Patch Plan — Plan-inspired player analytics for Pumpkin (Pumpkin Patch bundled plugin)"
+license = "MIT"
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+patch-analytics-protocol = { path = "../patch-analytics-protocol" }
+pumpkin-plugin-api = { git = "https://github.com/Pumpkin-MC/Pumpkin", rev = "1859221e7ad1227f43277f74507f921c0acec83f", package = "pumpkin-plugin-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

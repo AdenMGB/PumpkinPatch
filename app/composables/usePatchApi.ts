@@ -9,6 +9,7 @@ import type {
   ModrinthSearchResult,
   ModrinthVersion,
   PumpkinMarketListResult,
+  NetworkAnalyticsOverview,
   NetworkSummary,
   PingResult,
   ServerRecord,
@@ -76,5 +77,7 @@ export function usePatchApi() {
       }),
     pumpkinMarketInstall: (pluginId: number, instancePath: string) =>
       invoke<string>('pumpkin_market_install_plugin', { pluginId, instancePath }),
+    analyticsNetworkOverview: (networkId: string) =>
+      invoke<NetworkAnalyticsOverview>('analytics_network_overview', { networkId }),
   }
 }

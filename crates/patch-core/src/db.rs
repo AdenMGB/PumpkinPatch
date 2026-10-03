@@ -69,13 +69,18 @@ impl Database {
         )
         .execute(&pool)
         .await;
+        let _ = sqlx::query(
+            "ALTER TABLE networks ADD COLUMN analytics_export_token TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(&pool)
+        .await;
         Ok(Self { pool })
     }
 
     pub async fn insert_network(&self, network: &NetworkRecord) -> Result<()> {
         sqlx::query(
-            "INSERT INTO networks (id, name, hub_type, hub_port, forwarding_secret, lobby_server_id, data_path, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO networks (id, name, hub_type, hub_port, forwarding_secret, lobby_server_id, data_path, analytics_export_token, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(network.id.to_string())
         .bind(&network.name)
@@ -84,6 +89,7 @@ impl Database {
         .bind(&network.forwarding_secret)
         .bind(network.lobby_server_id.map(|u| u.to_string()))
         .bind(&network.data_path)
+        .bind(&network.analytics_export_token)
         .bind(network.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
@@ -197,6 +203,20 @@ impl Database {
         Ok(settings)
     }
 
+    pub async fn ensure_analytics_export_token(&self, network_id: Uuid) -> Result<String> {
+        let network = self.get_network(network_id).await?;
+        if !network.analytics_export_token.is_empty() {
+            return Ok(network.analytics_export_token);
+        }
+        let token = crate::analytics::generate_export_secret();
+        sqlx::query("UPDATE networks SET analytics_export_token = ? WHERE id = ?")
+            .bind(&token)
+            .bind(network_id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(token)
+    }
+
     pub async fn save_settings(&self, settings: &AppSettings) -> Result<()> {
         for (key, value) in [
             ("java_path", settings.java_path.as_str()),
@@ -228,6 +248,9 @@ fn network_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<NetworkRecord> {
     let created_at = chrono::DateTime::parse_from_rfc3339(row.get::<String, _>("created_at").as_str())
         .map_err(|e| Error::Other(e.to_string()))?
         .with_timezone(&Utc);
+    let analytics_export_token: String = row
+        .try_get("analytics_export_token")
+        .unwrap_or_default();
     Ok(NetworkRecord {
         id,
         name: row.get("name"),
@@ -236,6 +259,7 @@ fn network_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<NetworkRecord> {
         forwarding_secret: row.get("forwarding_secret"),
         lobby_server_id,
         data_path: row.get("data_path"),
+        analytics_export_token,
         created_at,
     })
 }

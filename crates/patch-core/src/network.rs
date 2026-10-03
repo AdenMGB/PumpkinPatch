@@ -1,3 +1,4 @@
+use crate::analytics::generate_export_secret;
 use crate::db::Database;
 use crate::error::{Error, Result};
 use crate::models::{
@@ -113,6 +114,7 @@ impl NetworkOrchestrator {
             forwarding_secret,
             lobby_server_id: Some(lobby_id),
             data_path: network_path.to_string_lossy().into(),
+            analytics_export_token: generate_export_secret(),
             created_at: Utc::now(),
         };
 

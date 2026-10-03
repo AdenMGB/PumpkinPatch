@@ -1,4 +1,5 @@
 use super::Result;
+use crate::bundled_plugins::provision_server_plugin;
 use crate::state::AppStateHandle;
 use patch_core::{
     list_installed_plugins, read_hub_settings, read_server_settings, remove_installed_plugin,
@@ -124,11 +125,12 @@ pub async fn server_add_backend(
     let mc = request
         .minecraft_version
         .unwrap_or_else(|| "1.21.4".to_string());
-    inner
+    let backend = inner
         .networks
         .add_backend(&inner.db, &network, &settings, &request.name, &mc)
-        .await
-        .map_err(Into::into)
+        .await?;
+    provision_server_plugin(&state, &inner, &network, &backend).await;
+    Ok(backend)
 }
 
 #[tauri::command]

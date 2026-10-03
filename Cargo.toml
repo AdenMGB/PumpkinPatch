@@ -2,10 +2,13 @@
 resolver = "2"
 members = [
     "crates/patch-core",
+    "plugins/patch-analytics-protocol",
     "plugins/patch-network-protocol",
     "plugins/patch-hub-lobby",
     "src-tauri",
 ]
+
+exclude = ["plugins/patch-plan-analytics"]
 
 [workspace.package]
 edition = "2021"

@@ -5,6 +5,7 @@ description = "Pumpkin Patch server network hub core"
 edition.workspace = true
 
 [dependencies]
+patch-analytics-protocol = { path = "../../plugins/patch-analytics-protocol" }
 chrono = { version = "0.4", features = ["serde"] }
 directories = "6"
 rand = "0.9"

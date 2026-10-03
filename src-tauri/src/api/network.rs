@@ -1,4 +1,5 @@
 use super::Result;
+use crate::bundled_plugins::provision_network_plugins;
 use crate::state::AppStateHandle;
 use patch_core::{
     deploy_plugin, ping_server, CreateNetworkRequest, JoinInfo, LogLine, NetworkOrchestrator,
@@ -67,6 +68,7 @@ pub async fn network_create(
         .create_network(&inner.db, &settings, request)
         .await?;
 
+    provision_network_plugins(&state, &inner, &summary).await;
     deploy_lobby_plugin_if_configured(&state, &inner, &summary);
 
     let _ = app.emit("network-created", &summary.network.id);

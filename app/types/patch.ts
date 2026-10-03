@@ -142,6 +142,103 @@ export interface InstalledPlugin {
   size_bytes: number
 }
 
+export interface StatisticRow {
+  id: string
+  total: number
+}
+
+export interface ServerTotalsView {
+  total_logins: number
+  total_kicks: number
+  total_deaths: number
+  total_advancements: number
+  total_mob_kills: number
+  total_player_kills: number
+  total_recipes_discovered: number
+  total_blocks_harvested: number
+  total_chat_messages: number
+  total_commands: number
+  top_statistics: StatisticRow[]
+}
+
+export interface PlayerDetailRow {
+  uuid: string
+  name: string
+  join_count: number
+  login_count: number
+  playtime_secs: number
+  deaths: number
+  mob_kills: number
+  player_kills: number
+  advancements: number
+  recipes_discovered: number
+  blocks_harvested: number
+  chat_messages: number
+  commands_used: number
+  current_gamemode: string
+  last_world: string
+  xp_level: number
+  top_statistics: StatisticRow[]
+  recent_advancements: string[]
+  last_seen_unix: number
+}
+
+export interface DeathRow {
+  t: number
+  player_uuid: string
+  player_name: string
+  message: string
+  server_name: string
+}
+
+export interface EventRow {
+  t: number
+  kind: string
+  player_uuid: string
+  player_name: string
+  detail: string
+  server_name: string
+}
+
+export interface ActivityPoint {
+  t: number
+  online: number
+}
+
+export interface ServerAnalyticsSnapshot {
+  server_id: string
+  server_name: string
+  generated_at_unix: number
+  online_now: number
+  peak_online: number
+  total_joins: number
+  unique_players: number
+  total_playtime_secs: number
+  server_totals: ServerTotalsView
+  top_players: PlayerDetailRow[]
+  recent_deaths: DeathRow[]
+  recent_events: EventRow[]
+  activity_samples: ActivityPoint[]
+  stale: boolean
+}
+
+export interface NetworkAnalyticsOverview {
+  network_id: string
+  network_name: string
+  combined_online: number
+  combined_unique_players: number
+  combined_total_joins: number
+  combined_playtime_secs: number
+  combined_deaths: number
+  combined_advancements: number
+  combined_mob_kills: number
+  combined_player_kills: number
+  combined_top_statistics: StatisticRow[]
+  recent_deaths: DeathRow[]
+  recent_events: EventRow[]
+  servers: ServerAnalyticsSnapshot[]
+}
+
 export interface AddBackendRequest {
   name: string
   minecraft_version?: string

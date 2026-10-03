@@ -1,5 +1,6 @@
 //! Pumpkin Patch core: networks, downloads, processes, and ping.
 
+mod analytics;
 mod db;
 mod error;
 mod hub_settings;
@@ -21,6 +22,10 @@ mod releases;
 mod server_settings;
 mod state;
 
+pub use analytics::{
+    aggregate_network_analytics, generate_export_secret, read_server_analytics,
+    write_patch_plan_config, NetworkAnalyticsOverview, ServerAnalyticsSnapshot,
+};
 pub use db::Database;
 pub use error::{Error, Result};
 pub use hub_settings::{read_hub_settings, write_hub_settings, HubSettings, HubSettingsPatch};
@@ -41,7 +46,9 @@ pub use models::*;
 pub use network::NetworkOrchestrator;
 pub use ping::ping_server;
 pub use plugin_install::discover_plugins_root;
-pub use plugins::{deploy_plugin, PluginManifest, PluginManifestEntry};
+pub use plugins::{
+    deploy_auto_plugins_for_server, deploy_plugin, PluginManifest, PluginManifestEntry,
+};
 pub use process::{LogLine, ProcessSupervisor};
 pub use pumpkin_market::{
     PumpkinMarketClient, PumpkinMarketListResult, PumpkinMarketPluginDetail,
