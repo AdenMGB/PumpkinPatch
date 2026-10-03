@@ -12,8 +12,8 @@
     {
       "id": "patch-plan-analytics",
       "name": "Patch Plan",
-      "version": "0.1.0",
-      "description": "Plan-inspired player analytics for Pumpkin Patch (joins, playtime, activity samples)",
+      "version": "0.2.0",
+      "description": "Plan-inspired analytics: stats, deaths, advancements, sessions, activity",
       "artifact": "artifacts/patch-plan-analytics.wasm",
       "targets": ["lobby", "backend"],
       "auto_deploy": true

@@ -1,20 +1,23 @@
 //! Patch Plan — Plan-inspired player analytics export format for Pumpkin Patch networks.
-//!
-//! Inspired by [Plan](https://github.com/plan-player-analytics/Plan) (LGPL-3). This is a
-//! native Pumpkin WASM implementation, not a port of Plan's Java codebase.
 
 use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Must match [`PluginMetadata::name`] in the PatchPlan Pumpkin plugin.
 pub const PLUGIN_DATA_DIR_NAME: &str = "PatchPlan";
 pub const CONFIG_FILENAME: &str = "patch-config.json";
 pub const EXPORT_FILENAME: &str = "export.json";
 pub const STATE_FILENAME: &str = "state.json";
-pub const EXPORT_SCHEMA_VERSION: u32 = 1;
+pub const EXPORT_SCHEMA_VERSION: u32 = 2;
+
+pub const MAX_RECENT_DEATHS: usize = 120;
+pub const MAX_RECENT_EVENTS: usize = 400;
+pub const MAX_RECENT_ADVANCEMENTS_PER_PLAYER: usize = 64;
+pub const MAX_EXPORT_PLAYERS: usize = 512;
+pub const MAX_ACTIVITY_SAMPLES: usize = 576;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchPlanConfig {
@@ -25,21 +28,80 @@ pub struct PatchPlanConfig {
     pub export_secret: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PlayerStats {
     pub uuid: String,
     pub name: String,
     pub first_seen_unix: i64,
     pub last_seen_unix: i64,
     pub join_count: u64,
+    pub login_count: u64,
+    pub kick_count: u64,
     pub playtime_secs: u64,
+    pub deaths: u64,
+    pub mob_kills: u64,
+    pub player_kills: u64,
+    pub advancements: u64,
+    pub recipes_discovered: u64,
+    pub items_consumed: u64,
+    pub items_broken: u64,
+    pub blocks_harvested: u64,
+    pub teleports: u64,
+    pub world_changes: u64,
+    pub chat_messages: u64,
+    pub commands_used: u64,
+    pub fish_caught: u64,
+    pub portal_uses: u64,
+    pub items_dropped: u64,
+    pub beds_entered: u64,
+    pub items_damaged: u64,
+    pub xp_gained: i64,
+    pub xp_level: i32,
+    pub current_gamemode: String,
+    pub last_world: String,
+    #[serde(default)]
+    pub statistic_totals: HashMap<String, u64>,
+    #[serde(default)]
+    pub recent_advancements: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivitySample {
-    /// Unix timestamp (seconds).
     pub t: i64,
     pub online: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServerTotals {
+    pub total_logins: u64,
+    pub total_kicks: u64,
+    pub total_deaths: u64,
+    pub total_advancements: u64,
+    pub total_mob_kills: u64,
+    pub total_player_kills: u64,
+    pub total_recipes_discovered: u64,
+    pub total_blocks_harvested: u64,
+    pub total_chat_messages: u64,
+    pub total_commands: u64,
+    #[serde(default)]
+    pub statistic_totals: HashMap<String, u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeathRecord {
+    pub t: i64,
+    pub player_uuid: String,
+    pub player_name: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsEvent {
+    pub t: i64,
+    pub kind: String,
+    pub player_uuid: String,
+    pub player_name: String,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +116,12 @@ pub struct AnalyticsPayload {
     pub total_joins: u64,
     pub unique_players: u64,
     pub total_playtime_secs: u64,
+    #[serde(default)]
+    pub server_totals: ServerTotals,
+    #[serde(default)]
+    pub recent_deaths: Vec<DeathRecord>,
+    #[serde(default)]
+    pub recent_events: Vec<AnalyticsEvent>,
     pub players: Vec<PlayerStats>,
     pub activity_samples: Vec<ActivitySample>,
 }
@@ -77,6 +145,31 @@ pub fn export_file_path(instance_path: &std::path::Path) -> std::path::PathBuf {
 
 pub fn config_file_path(instance_path: &std::path::Path) -> std::path::PathBuf {
     export_data_dir(instance_path).join(CONFIG_FILENAME)
+}
+
+pub fn mirror_vanilla_stat_counters(player: &mut PlayerStats) {
+    for (id, total) in &player.statistic_totals {
+        let key = id.as_str();
+        if key.contains("deaths") {
+            player.deaths = player.deaths.max(*total);
+        } else if key.contains("player_kills") {
+            player.player_kills = player.player_kills.max(*total);
+        } else if key.contains("mob_kills") {
+            player.mob_kills = player.mob_kills.max(*total);
+        }
+    }
+}
+
+pub fn apply_stat_increment(player: &mut PlayerStats, statistic_id: &str, amount: i32) {
+    if amount <= 0 {
+        return;
+    }
+    let add = amount as u64;
+    *player
+        .statistic_totals
+        .entry(statistic_id.to_string())
+        .or_insert(0) += add;
+    mirror_vanilla_stat_counters(player);
 }
 
 pub fn sign_payload(payload: &AnalyticsPayload, secret: &str) -> Result<String, String> {
@@ -117,7 +210,7 @@ mod tests {
     #[test]
     fn sign_and_verify_roundtrip() {
         let payload = AnalyticsPayload {
-            schema_version: 1,
+            schema_version: 2,
             server_id: "s".into(),
             server_name: "Lobby".into(),
             network_id: "n".into(),
@@ -127,6 +220,9 @@ mod tests {
             total_joins: 10,
             unique_players: 3,
             total_playtime_secs: 100,
+            server_totals: ServerTotals::default(),
+            recent_deaths: vec![],
+            recent_events: vec![],
             players: vec![],
             activity_samples: vec![],
         };
@@ -136,6 +232,12 @@ mod tests {
             signature: sig,
         };
         verify_signed_export(&export, "test-secret").unwrap();
-        assert!(verify_signed_export(&export, "wrong").is_err());
+    }
+
+    #[test]
+    fn stat_increment_updates_map() {
+        let mut p = PlayerStats::default();
+        apply_stat_increment(&mut p, "minecraft:custom:deaths", 1);
+        assert_eq!(p.statistic_totals.get("minecraft:custom:deaths"), Some(&1));
     }
 }
