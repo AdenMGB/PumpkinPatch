@@ -5,9 +5,10 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tendril_audio_deck::{list_output_devices, SharedAdminDeck, AudioOutputDevice};
 use tendril_voice::{
-    TendrilVoiceConfig, TendrilVoiceEngine, TendrilVoiceSfu, TendrilVoiceStats, VoicePeerInfo,
-    VoicePosition,
+    MonitorEar, TendrilVoiceConfig, TendrilVoiceEngine, TendrilVoiceSfu, TendrilVoiceStats,
+    VoicePeerInfo, VoicePosition,
 };
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -20,6 +21,7 @@ struct TendrilRuntime {
 }
 
 static TENDRIL: Mutex<Option<TendrilRuntime>> = Mutex::const_new(None);
+static AUDIO_DECK: Mutex<SharedAdminDeck> = Mutex::const_new(SharedAdminDeck::new());
 
 #[derive(Serialize)]
 pub struct TendrilVoiceStatsDto {
@@ -264,4 +266,64 @@ pub async fn tendril_voice_flush_report(
         total_bytes: clip.total_bytes,
         output_dir: base.to_string_lossy().into_owned(),
     })
+}
+
+#[tauri::command]
+pub async fn voice_deck_list_devices() -> Result<Vec<AudioOutputDevice>> {
+    Ok(list_output_devices())
+}
+
+#[tauri::command]
+pub async fn voice_deck_start_monitor(
+    device_id: Option<String>,
+    x: f64,
+    y: f64,
+    z: f64,
+    dimension: String,
+) -> Result<String> {
+    let deck = AUDIO_DECK.lock().await;
+    let sink = deck
+        .start(device_id.as_deref())
+        .map_err(|e| patch_core::Error::InvalidState(e.to_string()))?;
+    let guard = TENDRIL.lock().await;
+    if let Some(rt) = guard.as_ref() {
+        rt.engine.set_monitor(
+            Some(MonitorEar {
+                x,
+                y,
+                z,
+                dimension,
+            }),
+            Some(sink),
+        );
+    }
+    Ok("Admin audio deck monitoring — Opus near the ear position will play on desktop output.".into())
+}
+
+#[tauri::command]
+pub async fn voice_deck_stop_monitor() -> Result<()> {
+    {
+        let guard = TENDRIL.lock().await;
+        if let Some(rt) = guard.as_ref() {
+            rt.engine.set_monitor(None, None);
+        }
+    }
+    let deck = AUDIO_DECK.lock().await;
+    deck.stop();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn voice_deck_play_evidence(
+    device_id: Option<String>,
+    output_dir: String,
+) -> Result<u32> {
+    let deck_guard = AUDIO_DECK.lock().await;
+    let _ = deck_guard
+        .start(device_id.as_deref())
+        .map_err(|e| patch_core::Error::InvalidState(e.to_string()))?;
+    let count = deck_guard
+        .play_evidence_directory(std::path::Path::new(&output_dir))
+        .map_err(|e| patch_core::Error::InvalidState(e.to_string()))?;
+    Ok(count)
 }

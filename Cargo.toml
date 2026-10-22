@@ -12,6 +12,7 @@ members = [
     "crates/pumpkin-hook-sdk",
     "crates/velocity-bridge",
     "crates/tendril-voice",
+    "crates/tendril-audio-deck",
     "crates/patch-plugin-resolve",
     "crates/patch-cas",
     "crates/crow-swarm",

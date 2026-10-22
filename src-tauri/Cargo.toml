@@ -23,6 +23,7 @@ patch-cas = { path = "../crates/patch-cas" }
 patchwork = { path = "../crates/patchwork" }
 patch-audit = { path = "../crates/patch-audit" }
 tendril-voice = { path = "../crates/tendril-voice" }
+tendril-audio-deck = { path = "../crates/tendril-audio-deck" }
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

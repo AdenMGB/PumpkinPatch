@@ -6,7 +6,8 @@ mod protocol;
 
 pub use buffer::SpeakerRingBuffer;
 pub use engine::{
-    DEFAULT_PROXIMITY_BLOCKS, TendrilVoiceEngine, VoicePeerInfo, VoicePosition, VoiceReportClip,
+    DEFAULT_PROXIMITY_BLOCKS, MonitorEar, TendrilVoiceEngine, VoicePeerInfo, VoicePosition,
+    VoiceReportClip,
 };
 pub use protocol::{
     encode_handshake, encode_sound, parse_packet, uuid_bytes_from_str, uuid_bytes_to_string,

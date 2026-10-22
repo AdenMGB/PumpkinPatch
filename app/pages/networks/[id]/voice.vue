@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import type { TendrilVoicePeer, TendrilVoiceStats } from '~/types/patch'
+import type { TendrilVoicePeer, TendrilVoiceStats, VoiceAudioOutputDevice } from '~/types/patch'
 import { usePatchApi } from '~/composables/usePatchApi'
 
 const route = useRoute()
@@ -16,6 +16,14 @@ const stats = ref<TendrilVoiceStats | null>(null)
 const peers = ref<TendrilVoicePeer[]>([])
 const flushUuid = ref('')
 const flushResult = ref<string | null>(null)
+const devices = ref<VoiceAudioOutputDevice[]>([])
+const selectedDevice = ref('')
+const earX = ref(0)
+const earY = ref(64)
+const earZ = ref(0)
+const earDimension = ref('minecraft:overworld')
+const monitorOn = ref(false)
+const evidenceDir = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
@@ -41,6 +49,54 @@ async function startSfu() {
   }
 }
 
+async function loadDevices() {
+  try {
+    devices.value = await api.voiceDeckListDevices()
+    if (!selectedDevice.value && devices.value.length) {
+      selectedDevice.value = devices.value[0].id
+    }
+  } catch {
+    devices.value = []
+  }
+}
+
+async function toggleMonitor() {
+  message.value = ''
+  try {
+    if (monitorOn.value) {
+      await api.voiceDeckStopMonitor()
+      monitorOn.value = false
+      message.value = 'Admin audio monitor stopped.'
+    } else {
+      const msg = await api.voiceDeckStartMonitor(
+        earX.value,
+        earY.value,
+        earZ.value,
+        earDimension.value,
+        selectedDevice.value || undefined,
+      )
+      monitorOn.value = true
+      message.value = msg
+    }
+  } catch (e) {
+    message.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function playEvidence() {
+  if (!evidenceDir.value.trim()) return
+  message.value = ''
+  try {
+    const n = await api.voiceDeckPlayEvidence(
+      evidenceDir.value.trim(),
+      selectedDevice.value || undefined,
+    )
+    message.value = `Queued ${n} Opus frames from evidence directory.`
+  } catch (e) {
+    message.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
 async function flushEvidence() {
   if (!flushUuid.value.trim()) return
   flushResult.value = null
@@ -56,6 +112,7 @@ async function flushEvidence() {
 
 onMounted(() => {
   refresh()
+  loadDevices()
   pollTimer = setInterval(refresh, 3000)
 })
 
@@ -126,6 +183,51 @@ onUnmounted(() => {
           </tr>
         </tbody>
       </table>
+    </section>
+
+    <section class="card">
+      <h2 class="card__title">Admin live audio deck</h2>
+      <p class="muted">
+        Drop an ear at a world coordinate (cpal output). Speakers within SFU proximity play through your
+        desktop headphones — no Minecraft client required (plangem §5.1).
+      </p>
+      <div class="form-row">
+        <label>
+          Output device
+          <select v-model="selectedDevice" class="input">
+            <option value="">Default</option>
+            <option v-for="d in devices" :key="d.id" :value="d.id">{{ d.name }}</option>
+          </select>
+        </label>
+        <label>
+          X
+          <input v-model.number="earX" type="number" class="input input--narrow" />
+        </label>
+        <label>
+          Y
+          <input v-model.number="earY" type="number" class="input input--narrow" />
+        </label>
+        <label>
+          Z
+          <input v-model.number="earZ" type="number" class="input input--narrow" />
+        </label>
+        <label class="grow">
+          Dimension
+          <input v-model="earDimension" type="text" class="input" />
+        </label>
+        <button type="button" class="btn" :class="{ 'btn--primary': !monitorOn }" @click="toggleMonitor">
+          {{ monitorOn ? 'Stop monitor' : 'Start monitor' }}
+        </button>
+      </div>
+      <div class="form-row">
+        <label class="grow">
+          Evidence directory (replay)
+          <input v-model="evidenceDir" type="text" class="input" placeholder="/tmp/pumpkinpatch-voice-evidence/..." />
+        </label>
+        <button type="button" class="btn" :disabled="!evidenceDir.trim()" @click="playEvidence">
+          Play evidence
+        </button>
+      </div>
     </section>
 
     <section class="card">

@@ -335,6 +335,28 @@ export function usePatchApi() {
         playerUuid,
         outputDir: outputDir ?? null,
       }),
+    voiceDeckListDevices: () =>
+      invoke<import('~/types/patch').VoiceAudioOutputDevice[]>('voice_deck_list_devices'),
+    voiceDeckStartMonitor: (
+      x: number,
+      y: number,
+      z: number,
+      dimension: string,
+      deviceId?: string,
+    ) =>
+      invoke<string>('voice_deck_start_monitor', {
+        deviceId: deviceId ?? null,
+        x,
+        y,
+        z,
+        dimension,
+      }),
+    voiceDeckStopMonitor: () => invoke<void>('voice_deck_stop_monitor'),
+    voiceDeckPlayEvidence: (outputDir: string, deviceId?: string) =>
+      invoke<number>('voice_deck_play_evidence', {
+        outputDir,
+        deviceId: deviceId ?? null,
+      }),
     planDbListBackups: (networkId: string) =>
       invoke<PlanBackupEntry[]>('plan_db_list_backups', { networkId }),
     planDbOptimize: () => invoke<void>('plan_db_optimize'),

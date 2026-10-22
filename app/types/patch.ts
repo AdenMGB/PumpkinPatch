@@ -569,6 +569,11 @@ export interface TendrilVoiceFlushResult {
   output_dir: string
 }
 
+export interface VoiceAudioOutputDevice {
+  id: string
+  name: string
+}
+
 export interface PlanQueryRequest {
   activity_groups: string[]
   join_addresses: string[]
