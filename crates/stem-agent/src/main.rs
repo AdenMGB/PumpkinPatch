@@ -30,8 +30,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
             let req = String::from_utf8_lossy(&buf[..n]);
-            let body = if req.starts_with("GET /health") {
-                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok\n"
+            let body: String = if req.starts_with("GET /health") {
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok\n".into()
             } else if req.starts_with("GET /vineyard") {
                 let routes = bus.total_route_count().await;
                 let servers = bus.registered_server_count().await;
