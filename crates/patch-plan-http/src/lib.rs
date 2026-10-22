@@ -1,6 +1,7 @@
 //! Embedded Plan-shaped HTTP API for external dashboards (indepth.md §5.3).
 
 mod auth_layer;
+mod manage_api;
 mod plan_react;
 mod react_compat;
 
@@ -13,7 +14,8 @@ use axum::{
     Json, Router,
 };
 use patch_core::{
-    execute_plan_query, extension_data_v1, ingest_signed_export, list_join_addresses, list_kills,
+    execute_plan_query, extension_data_v1, ingest_signed_export, list_command_usages,
+    list_join_addresses, list_kills, players_online_at,
     list_web_users, load_cached_plan_query, logout_web_user, network_overview_v1,
     player_gdpr_export_json, plan_log_access, plan_web_login, read_disk_cache, start_web_registration,
     write_disk_cache, PlanJsonCache,
@@ -50,6 +52,9 @@ struct ServerQuery {
     token: Option<String>,
     /// Plan ETag-style cache bypass (`?timestamp=` epoch ms).
     timestamp: Option<i64>,
+    /// `/v1/playersOnline?date=` epoch ms.
+    date: Option<i64>,
+    aggregate: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -74,6 +79,11 @@ pub fn router(state: PlanHttpState) -> Router {
     let admin_protected = Router::new()
         .route("/v1/auth/users", get(auth_users))
         .route("/v1/auth/logout", post(auth_logout))
+        .route("/v1/webGroups", get(manage_api::web_groups))
+        .route("/v1/permissions", get(manage_api::permissions_catalog))
+        .route("/v1/groupPermissions", get(manage_api::group_permissions))
+        .route("/v1/saveGroupPermissions", post(manage_api::save_group_permissions))
+        .route("/v1/deleteGroup", axum::routing::delete(manage_api::delete_group))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_layer::require_admin_session,
@@ -114,8 +124,10 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/auth/logout", get(react_compat::auth_logout_get))
         .route("/v1/serverIdentity", get(server_identity))
         .route("/v1/onlineInsights", get(online_insights))
-        .route("/v1/statistics", get(statistics_stub))
-        .route("/v1/gameAllowlistBounces", get(game_allowlist_bounces_stub))
+        .route("/v1/statistics", get(statistics))
+        .route("/v1/gameAllowlistBounces", get(game_allowlist_bounces))
+        .route("/v1/pluginHistory", get(plugin_history))
+        .route("/v1/playersOnline", get(players_online))
         .route("/", get(plan_dashboard_redirect))
         .route("/app", get(plan_embedded_app))
         .route("/app/", get(plan_embedded_app));
@@ -831,12 +843,65 @@ async fn online_insights(
     }
 }
 
-async fn statistics_stub() -> impl IntoResponse {
-    Json(serde_json::json!({ "statistics": [] }))
+async fn statistics(State(st): State<PlanHttpState>, Query(q): Query<ServerQuery>) -> impl IntoResponse {
+    let _aggregate = q.aggregate.unwrap_or(false);
+    let _server = q.server.as_deref();
+    Json(serde_json::json!({ "statistics": [] })).into_response()
 }
 
-async fn game_allowlist_bounces_stub() -> impl IntoResponse {
+async fn game_allowlist_bounces() -> impl IntoResponse {
     Json(serde_json::json!({ "bounces": [] }))
+}
+
+async fn plugin_history(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    let rows = match list_command_usages(
+        &st.pool,
+        &st.network_id,
+        q.server.as_deref(),
+        200,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let history = rows
+        .into_iter()
+        .map(|row| {
+            serde_json::json!({
+                "pluginName": row.command,
+                "timesUsed": row.times_used,
+                "serverName": row.server_name,
+            })
+        })
+        .collect::<Vec<_>>();
+    Json(serde_json::json!({ "history": history })).into_response()
+}
+
+async fn players_online(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    let at_ms = q.date.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0)
+    });
+    match players_online_at(
+        &st.pool,
+        &st.network_id,
+        q.server.as_deref(),
+        at_ms,
+    )
+    .await
+    {
+        Ok(names) => Json(names).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn plan_manage_page(

@@ -1279,6 +1279,56 @@ pub async fn graph_players_online(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanPlayerOnlineName {
+    pub name: String,
+}
+
+/// Players with an active session at `at_ms` (for Plan `/v1/playersOnline` hover chart).
+pub async fn players_online_at(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuid: Option<&str>,
+    at_ms: i64,
+) -> Result<Vec<PlanPlayerOnlineName>> {
+    let rows = if let Some(uuid) = server_uuid {
+        sqlx::query(
+            "SELECT DISTINCT u.name AS name FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND s.uuid = ?
+               AND sess.session_start <= ? AND COALESCE(sess.session_end, ?) >= ?",
+        )
+        .bind(network_id)
+        .bind(uuid)
+        .bind(at_ms)
+        .bind(at_ms)
+        .bind(at_ms)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT DISTINCT u.name AS name FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ?
+               AND sess.session_start <= ? AND COALESCE(sess.session_end, ?) >= ?",
+        )
+        .bind(network_id)
+        .bind(at_ms)
+        .bind(at_ms)
+        .bind(at_ms)
+        .fetch_all(pool)
+        .await?
+    };
+    Ok(rows
+        .iter()
+        .map(|row| PlanPlayerOnlineName {
+            name: row.get("name"),
+        })
+        .collect())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanServerOverviewV1 {
     pub server_uuid: String,
     pub server_name: String,

@@ -13,6 +13,7 @@ mod plan_db;
 mod plan_import;
 mod plan_sync;
 mod plan_auth;
+mod plan_web_groups;
 mod plan_extension;
 mod plan_export;
 mod plan_theme;
@@ -50,6 +51,7 @@ pub use analytics::{
 pub use plan_store::ensure_plan_schema;
 pub use plan_store::{
     graph_players_online, list_command_usages, list_kills, list_players_table, list_sessions,
+    players_online_at, PlanPlayerOnlineName,
     list_join_addresses, network_overview_v1, ping_table_v1, player_gdpr_export_json,
     player_profile_v1, player_versus_v1,
     server_overview_v1, sessions_overview_v1, PlanJoinAddressRow, PlanSessionsOverviewV1,
@@ -78,6 +80,10 @@ pub use plan_auth::{
     list_user_permissions, registration_code_pending, username_for_session_cookie,
     validate_cookie as plan_validate_cookie, PlanWebUser,
     RegistrationStart,
+};
+pub use plan_web_groups::{
+    delete_web_group, list_all_web_permissions, list_permissions_for_group, list_web_group_names,
+    save_permissions_for_group,
 };
 pub use plan_export::{default_export_dir, export_plan_static_bundle};
 pub use plan_theme::{plan_theme_json, plan_theme_json_db, save_plan_theme_json};
