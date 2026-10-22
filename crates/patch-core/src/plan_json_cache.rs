@@ -9,6 +9,8 @@ use tokio::sync::RwLock;
 
 /// Plan "Reduced Refresh Barrier" TTL.
 pub const REFRESH_BARRIER_MS: u64 = 15_000;
+/// Plan in-memory cache tier for overview/graph payloads (§5.1).
+pub const MEMORY_CACHE_MS: u64 = 300_000;
 
 pub struct PlanJsonCache {
     entries: RwLock<HashMap<String, CachedJson>>,
@@ -36,8 +38,16 @@ impl PlanJsonCache {
         )
     }
 
+    fn ttl_for_key(key: &str) -> Duration {
+        if key.starts_with("graph|") || key.contains("Overview") {
+            Duration::from_millis(MEMORY_CACHE_MS)
+        } else {
+            Duration::from_millis(REFRESH_BARRIER_MS)
+        }
+    }
+
     pub async fn get_json(&self, key: &str) -> Option<String> {
-        let ttl = Duration::from_millis(REFRESH_BARRIER_MS);
+        let ttl = Self::ttl_for_key(key);
         let guard = self.entries.read().await;
         guard.get(key).and_then(|entry| {
             if entry.created.elapsed() < ttl {
@@ -53,9 +63,8 @@ impl PlanJsonCache {
     }
 
     pub async fn set_json(&self, key: String, body: String) {
-        let ttl = Duration::from_millis(REFRESH_BARRIER_MS);
         let mut guard = self.entries.write().await;
-        guard.retain(|_, e| e.created.elapsed() < ttl);
+        guard.retain(|k, e| e.created.elapsed() < Self::ttl_for_key(k));
         guard.insert(
             key,
             CachedJson {

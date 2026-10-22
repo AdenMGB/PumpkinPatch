@@ -825,6 +825,30 @@ pub fn placeholder_context_for(
         })
         .unwrap_or_default();
 
+    let combat_in_window = |cutoff: i64| -> (u64, u64, u64) {
+        let mut deaths = 0u64;
+        let mut mob = 0u64;
+        let mut pvp = 0u64;
+        for p in rt.players.values() {
+            for s in &p.completed_sessions {
+                if s.end_unix >= cutoff {
+                    deaths += s.deaths as u64;
+                    mob += s.mob_kills as u64;
+                }
+            }
+            if p.last_seen_unix >= cutoff {
+                pvp += p.player_kills;
+            }
+        }
+        (deaths, mob, pvp)
+    };
+    let (deaths_day, mob_day, pvp_day) = combat_in_window(now - 86_400);
+    let (deaths_week, mob_week, pvp_week) = combat_in_window(now - 7 * 86_400);
+    let (deaths_month, mob_month, pvp_month) = combat_in_window(now - 30 * 86_400);
+    let deaths_total = rt.players.values().map(|p| p.deaths).sum();
+    let mob_kills_total = rt.players.values().map(|p| p.mob_kills).sum();
+    let player_kills_total = rt.players.values().map(|p| p.player_kills).sum();
+
     let player_recent_kills: Vec<(String, String)> = rt
         .recent_pvp_kills
         .iter()
@@ -898,6 +922,18 @@ pub fn placeholder_context_for(
         sessions_count_month: count_sessions_since(now - 30 * 86_400),
         timezone_offset: "UTC".into(),
         player_recent_kills,
+        deaths_total,
+        deaths_day,
+        deaths_week,
+        deaths_month,
+        mob_kills_total,
+        mob_kills_day: mob_day,
+        mob_kills_week: mob_week,
+        mob_kills_month: mob_month,
+        player_kills_total,
+        player_kills_day: pvp_day,
+        player_kills_week: pvp_week,
+        player_kills_month: pvp_month,
         top_playtime: top,
     }
 }

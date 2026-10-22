@@ -80,6 +80,7 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         .execute(DisableKickHandler),
                 ),
         )
+        .then(CommandNode::literal("enable").execute(EnableHandler))
         .then(
             CommandNode::literal("setgroup").then(
                 CommandNode::argument("user", &ArgumentType::String(StringType::Word)).then(
@@ -886,6 +887,25 @@ impl CommandHandler for PlaceholderHandler {
         .flatten()
         .unwrap_or_else(|| "§7Plan runtime not initialized.".into());
         player.send_system_message(TextComponent::text(&msg), false);
+        Ok(1)
+    }
+}
+
+struct EnableHandler;
+
+impl CommandHandler for EnableHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let _ = with_runtime(|rt| {
+            rt.analytics_enabled = true;
+            rt.kick_counting_enabled = true;
+            persist_state(rt).ok();
+        });
         Ok(1)
     }
 }

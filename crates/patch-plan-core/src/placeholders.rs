@@ -51,6 +51,18 @@ pub struct PlanPlaceholderContext {
     pub timezone_offset: String,
     /// Player's recent PvP kills as `(victim_name, weapon)`.
     pub player_recent_kills: Vec<(String, String)>,
+    pub deaths_total: u64,
+    pub deaths_day: u64,
+    pub deaths_week: u64,
+    pub deaths_month: u64,
+    pub mob_kills_total: u64,
+    pub mob_kills_day: u64,
+    pub mob_kills_week: u64,
+    pub mob_kills_month: u64,
+    pub player_kills_total: u64,
+    pub player_kills_day: u64,
+    pub player_kills_week: u64,
+    pub player_kills_month: u64,
     /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders.
     pub top_playtime: Vec<(String, u64, u64)>,
 }
@@ -68,6 +80,9 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         return Some(v);
     }
     if let Some(v) = resolve_recent_kill(inner, ctx) {
+        return Some(v);
+    }
+    if let Some(v) = resolve_sessions_combat(inner, ctx) {
         return Some(v);
     }
     match inner {
@@ -142,6 +157,24 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
             Some(format_duration(total / n))
         }
         "plan_player_player_caused_deaths" => Some(ctx.player_kills.to_string()),
+        _ => None,
+    }
+}
+
+fn resolve_sessions_combat(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
+    match inner {
+        "plan_sessions_deaths_total" => Some(ctx.deaths_total.to_string()),
+        "plan_sessions_deaths_day" => Some(ctx.deaths_day.to_string()),
+        "plan_sessions_deaths_week" => Some(ctx.deaths_week.to_string()),
+        "plan_sessions_deaths_month" => Some(ctx.deaths_month.to_string()),
+        "plan_sessions_mob_kills_total" => Some(ctx.mob_kills_total.to_string()),
+        "plan_sessions_mob_kills_day" => Some(ctx.mob_kills_day.to_string()),
+        "plan_sessions_mob_kills_week" => Some(ctx.mob_kills_week.to_string()),
+        "plan_sessions_mob_kills_month" => Some(ctx.mob_kills_month.to_string()),
+        "plan_sessions_player_kills_total" => Some(ctx.player_kills_total.to_string()),
+        "plan_sessions_player_kills_day" => Some(ctx.player_kills_day.to_string()),
+        "plan_sessions_player_kills_week" => Some(ctx.player_kills_week.to_string()),
+        "plan_sessions_player_kills_month" => Some(ctx.player_kills_month.to_string()),
         _ => None,
     }
 }
@@ -279,6 +312,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_players_online%", &ctx).as_deref(),
             Some("12")
+        );
+    }
+
+    #[test]
+    fn resolves_sessions_deaths_total() {
+        let ctx = PlanPlaceholderContext {
+            deaths_total: 42,
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_sessions_deaths_total%", &ctx).as_deref(),
+            Some("42")
         );
     }
 

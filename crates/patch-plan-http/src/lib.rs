@@ -85,6 +85,9 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/extensionData", get(extension_data))
         .route("/v1/network/overview", get(network_overview))
         .route("/v1/network/servers", get(network_servers))
+        .route("/v1/network/playerbaseOverview", get(network_playerbase_overview))
+        .route("/v1/network/sessionsOverview", get(network_sessions_overview))
+        .route("/v1/network/pingTable", get(network_ping_table))
         .route("/v1/player", get(player_profile))
         .route("/v1/player/json", get(player_gdpr_json))
         .route("/v1/graph", get(graph))
@@ -485,6 +488,37 @@ async fn network_servers(State(st): State<PlanHttpState>) -> impl IntoResponse {
     }
 }
 
+async fn network_playerbase_overview(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    let key = PlanJsonCache::cache_key("playerbaseOverview", &st.network_id, None, "network");
+    match with_plan_cache(&st.json_cache, key, false, || async {
+        playerbase_overview_v1(&st.pool, &st.network_id, None).await
+    })
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn network_sessions_overview(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    let key = PlanJsonCache::cache_key("sessionsOverview", &st.network_id, None, "network");
+    match with_plan_cache(&st.json_cache, key, false, || async {
+        sessions_overview_v1(&st.pool, &st.network_id, None).await
+    })
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn network_ping_table(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    match patch_core::ping_table_v1(&st.pool, &st.network_id, None).await {
+        Ok(rows) => Json(serde_json::json!({ "ping_table": rows })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 async fn player_profile(
     State(st): State<PlanHttpState>,
     Query(q): Query<ServerQuery>,
@@ -501,7 +535,18 @@ async fn graph(
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let graph_type = q.graph_type.as_deref().unwrap_or("playersOnline");
-    match plan_graph(&st.pool, &st.network_id, q.server.as_deref(), graph_type).await {
+    let key = PlanJsonCache::cache_key(
+        "graph",
+        &st.network_id,
+        q.server.as_deref(),
+        graph_type,
+    );
+    let cache_key = format!("graph|{}", key);
+    match with_plan_cache(&st.json_cache, cache_key, false, || async {
+        plan_graph(&st.pool, &st.network_id, q.server.as_deref(), graph_type).await
+    })
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

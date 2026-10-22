@@ -40,11 +40,22 @@ pub async fn sync_harvest_from_plan_sqlite(
         })
         .collect();
 
-    let mut store = HarvestStore::open(duckdb_path)
+    let json_path = if duckdb_path.extension().and_then(|e| e.to_str()) == Some("duckdb") {
+        duckdb_path.with_extension("harvest.json")
+    } else {
+        duckdb_path.to_path_buf()
+    };
+    let mut store = HarvestStore::open(&json_path)
         .map_err(|e| crate::error::Error::InvalidState(e.to_string()))?;
     store
         .upsert_sessions(network_id, &mapped)
         .map_err(|e| crate::error::Error::InvalidState(e.to_string()))?;
+
+    if duckdb_path.extension().and_then(|e| e.to_str()) == Some("duckdb") {
+        return harvest_metrics::sync_sessions_duckdb(duckdb_path, network_id, &mapped)
+            .map_err(|e| crate::error::Error::InvalidState(e.to_string()));
+    }
+
     store
         .session_count(network_id)
         .map_err(|e| crate::error::Error::InvalidState(e.to_string()))
