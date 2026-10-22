@@ -113,6 +113,9 @@ pub fn run() {
             api::platform::patchwork_materialize_merged_pack,
             api::voice::tendril_voice_start,
             api::voice::tendril_voice_stats,
+            api::voice::tendril_voice_list_peers,
+            api::voice::tendril_voice_set_position,
+            api::voice::tendril_voice_flush_report,
             api::telemetry::subscribe_live_telemetry,
             api::plugins_resolve::plugins_resolve_install_order,
         ])

@@ -2,7 +2,13 @@
 name = "tendril-voice"
 version = "0.1.0"
 edition.workspace = true
-description = "TendrilVoice spatial UDP voice SFU scaffold (plangem.md Phase 4)"
+description = "TendrilVoice spatial UDP voice SFU (plangem.md Phase 4)"
 
 [dependencies]
+dashmap = "6"
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "test-util"] }

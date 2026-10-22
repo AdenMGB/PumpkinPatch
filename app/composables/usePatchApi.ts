@@ -275,5 +275,32 @@ export function usePatchApi() {
       invoke<string>('analytics_plan_export_static', { networkId, serverId }),
     analyticsHarvestSync: (networkId: string) =>
       invoke<number>('analytics_harvest_sync', { networkId }),
+    tendrilVoiceStart: (bind = '0.0.0.0:24454', proximityBlocks?: number) =>
+      invoke<string>('tendril_voice_start', {
+        bind,
+        proximityBlocks: proximityBlocks ?? null,
+      }),
+    tendrilVoiceStats: () => invoke<import('~/types/patch').TendrilVoiceStats>('tendril_voice_stats'),
+    tendrilVoiceListPeers: () =>
+      invoke<import('~/types/patch').TendrilVoicePeer[]>('tendril_voice_list_peers'),
+    tendrilVoiceSetPosition: (
+      playerUuid: string,
+      x: number,
+      y: number,
+      z: number,
+      dimension: string,
+    ) =>
+      invoke<void>('tendril_voice_set_position', {
+        playerUuid,
+        x,
+        y,
+        z,
+        dimension,
+      }),
+    tendrilVoiceFlushReport: (playerUuid: string, outputDir?: string) =>
+      invoke<import('~/types/patch').TendrilVoiceFlushResult>('tendril_voice_flush_report', {
+        playerUuid,
+        outputDir: outputDir ?? null,
+      }),
   }
 }

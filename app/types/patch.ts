@@ -538,6 +538,29 @@ export interface GourdScarecrowStats {
   dropped: number
 }
 
+export interface TendrilVoiceStats {
+  packets_in: number
+  packets_out: number
+  bytes_in: number
+  forwards: number
+  spatial_drops: number
+  peers: number
+}
+
+export interface TendrilVoicePeer {
+  player_uuid: string
+  addr: string
+  dimension: string
+  packets_buffered: number
+}
+
+export interface TendrilVoiceFlushResult {
+  speaker_uuid: string
+  captured_packets: number
+  total_bytes: number
+  output_dir: string
+}
+
 export interface PlanQueryRequest {
   activity_groups: string[]
   join_addresses: string[]
