@@ -12,6 +12,7 @@ pub async fn sync_network_plan_exports(
     servers: &[ServerRecord],
     export_secret: &str,
 ) -> Result<Vec<PlanSyncReport>> {
+    let backups_dir = Path::new(&network.data_path).join("plan-backups");
     let pool = db.pool();
     crate::plan_store::ensure_plan_schema(pool).await?;
 
@@ -19,11 +20,13 @@ pub async fn sync_network_plan_exports(
     let mut reports = Vec::new();
     for server in servers {
         match sync_server_plan_export(
+            db,
             pool,
             network,
             server,
             export_secret,
             max_age,
+            &backups_dir,
         )
         .await
         {
@@ -35,11 +38,13 @@ pub async fn sync_network_plan_exports(
 }
 
 async fn sync_server_plan_export(
+    db: &Database,
     pool: &sqlx::SqlitePool,
     network: &NetworkRecord,
     server: &ServerRecord,
     export_secret: &str,
     max_age: i64,
+    backups_dir: &Path,
 ) -> Result<Option<PlanSyncReport>> {
     let snap = read_server_analytics(
         Path::new(&server.data_path),
@@ -65,6 +70,14 @@ async fn sync_server_plan_export(
     .await;
     let _ = crate::plan_auth::process_web_admin_actions(pool, &signed.payload.web_admin_actions)
         .await;
+    let _ = crate::plan_db::process_desktop_plan_requests(
+        pool,
+        &network.id.to_string(),
+        db.file_path(),
+        &backups_dir,
+        &signed.payload.desktop_plan_requests,
+    )
+    .await;
     let report = ingest_payload(pool, &network.id.to_string(), &signed.payload).await?;
     if let Ok(row) = sqlx::query("SELECT id FROM plan_servers WHERE uuid = ?")
         .bind(server.id.to_string())

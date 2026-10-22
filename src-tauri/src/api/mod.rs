@@ -9,6 +9,7 @@ pub mod network;
 pub mod orchestration;
 pub mod plugins_resolve;
 pub mod plan_auth;
+pub mod plan_db;
 pub mod plan_http;
 pub mod platform;
 pub mod ping;

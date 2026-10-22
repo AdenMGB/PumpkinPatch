@@ -50,7 +50,16 @@ pub struct RuntimeState {
     pub server_enabled_at: i64,
     pub registration_completions: Vec<patch_analytics_protocol::RegistrationCompletion>,
     pub web_admin_actions: Vec<patch_analytics_protocol::WebAdminAction>,
+    pub desktop_plan_requests: Vec<patch_analytics_protocol::DesktopPlanRequest>,
+    pub pending_db_op: Option<PendingDbOp>,
     pub vineyard_sink: Option<pumpkin_hook_sdk::TelemetrySink>,
+}
+
+#[derive(Debug, Clone)]
+#[derive(Debug, Clone)]
+pub enum PendingDbOp {
+    ClearNetwork,
+    RemovePlayer { target: String },
 }
 
 #[derive(Debug, Clone)]
@@ -565,6 +574,7 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
         performance_samples: rt.performance_samples.clone(),
         registration_completions: rt.registration_completions.clone(),
         web_admin_actions: rt.web_admin_actions.clone(),
+        desktop_plan_requests: rt.desktop_plan_requests.clone(),
     };
     let signature =
         patch_analytics_protocol::sign_payload(&payload, &rt.config.export_secret)?;
@@ -613,6 +623,21 @@ pub fn queue_web_admin_action(rt: &mut RuntimeState, action: patch_analytics_pro
 
 pub fn drain_web_admin_actions(rt: &mut RuntimeState) {
     rt.web_admin_actions.clear();
+}
+
+pub fn queue_desktop_plan_request(
+    rt: &mut RuntimeState,
+    action: patch_analytics_protocol::DesktopPlanRequest,
+) {
+    rt.desktop_plan_requests.push(action);
+    if rt.desktop_plan_requests.len() > 16 {
+        let drain = rt.desktop_plan_requests.len() - 16;
+        rt.desktop_plan_requests.drain(0..drain);
+    }
+}
+
+pub fn drain_desktop_plan_requests(rt: &mut RuntimeState) {
+    rt.desktop_plan_requests.clear();
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

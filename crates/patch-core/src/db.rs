@@ -49,11 +49,16 @@ CREATE TABLE IF NOT EXISTS deployed_plugins (
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
+    path: std::path::PathBuf,
 }
 
 impl Database {
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub fn file_path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -81,7 +86,10 @@ impl Database {
         )
         .execute(&pool)
         .await;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            path: db_path.to_path_buf(),
+        })
     }
 
     pub async fn insert_network(&self, network: &NetworkRecord) -> Result<()> {

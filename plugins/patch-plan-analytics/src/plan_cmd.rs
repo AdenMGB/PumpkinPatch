@@ -1,11 +1,12 @@
 //! In-game `/patchplan` and `/plan` commands (Plan §7 subset).
 
 use crate::state::{
-    drain_registration_completions, drain_web_admin_actions, persist_state, placeholder_context_for,
+    drain_desktop_plan_requests, drain_registration_completions, drain_web_admin_actions,
+    persist_state, placeholder_context_for, queue_desktop_plan_request, PendingDbOp,
     player_id, queue_registration_completion, queue_web_admin_action, unix_now, with_runtime,
     write_export,
 };
-use patch_analytics_protocol::WebAdminAction;
+use patch_analytics_protocol::{DesktopPlanRequest, WebAdminAction};
 use patch_plan_core::{
     active_playtime_in_weeks, resolve_placeholder, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS,
 };
@@ -102,8 +103,23 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
                             .execute(DbBackupHandler),
                     ),
+                )
+                .then(
+                    CommandNode::literal("remove").then(
+                        CommandNode::argument("player", &ArgumentType::String(StringType::Word))
+                            .execute(DbRemovePlayerHandler),
+                    ),
+                )
+                .then(
+                    CommandNode::literal("clear").then(
+                        CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
+                            .execute(DbClearPromptHandler),
+                    ),
                 ),
-        );
+        )
+        .then(literal_aliases("accept", &["yes", "y"], AcceptDbHandler))
+        .then(literal_aliases("cancel", &["no", "n"], CancelDbHandler))
+        .then(CommandNode::literal("import").execute(ImportHandler));
     context.register_command(cmd, "patchplan.command");
     Ok(())
 }
@@ -509,6 +525,7 @@ fn sync_plan_export(rt: &mut crate::state::RuntimeState, online: u32) {
     write_export(rt, online).ok();
     drain_registration_completions(rt);
     drain_web_admin_actions(rt);
+    drain_desktop_plan_requests(rt);
     persist_state(rt).ok();
 }
 
@@ -850,7 +867,10 @@ impl CommandHandler for DbOptimizeHandler {
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         require_console(&sender)?;
-        let _ = with_runtime(|rt| sync_plan_export(rt, server.get_player_count()));
+        let _ = with_runtime(|rt| {
+            queue_desktop_plan_request(rt, DesktopPlanRequest::DbOptimize);
+            sync_plan_export(rt, server.get_player_count());
+        });
         Ok(1)
     }
 }
@@ -866,11 +886,122 @@ impl CommandHandler for DbBackupHandler {
     ) -> Result<i32, CommandError> {
         require_console(&sender)?;
         let db_type = match args.get_value("db_type") {
-            Arg::Simple(s) => s,
-            _ => "sqlite",
+            Arg::Simple(s) => s.to_string(),
+            _ => "sqlite".into(),
         };
-        let _ = with_runtime(|rt| sync_plan_export(rt, server.get_player_count()));
-        let _ = (db_type, sender);
+        let _ = with_runtime(|rt| {
+            queue_desktop_plan_request(
+                rt,
+                DesktopPlanRequest::DbBackup {
+                    label: db_type.clone(),
+                },
+            );
+            sync_plan_export(rt, server.get_player_count());
+        });
+        Ok(1)
+    }
+}
+
+struct DbRemovePlayerHandler;
+
+impl CommandHandler for DbRemovePlayerHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let player = match args.get_value("player") {
+            Arg::Simple(s) => s.to_string(),
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan db remove <player>"),
+                ));
+            }
+        };
+        let _ = with_runtime(|rt| {
+            rt.pending_db_op = Some(PendingDbOp::RemovePlayer { target: player });
+        });
+        Ok(1)
+    }
+}
+
+struct DbClearPromptHandler;
+
+impl CommandHandler for DbClearPromptHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let _ = with_runtime(|rt| {
+            rt.pending_db_op = Some(PendingDbOp::ClearNetwork);
+        });
+        Ok(1)
+    }
+}
+
+struct AcceptDbHandler;
+
+impl CommandHandler for AcceptDbHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let _ = with_runtime(|rt| {
+            let op = rt.pending_db_op.take();
+            if let Some(op) = op {
+                match op {
+                    PendingDbOp::ClearNetwork => {
+                        queue_desktop_plan_request(rt, DesktopPlanRequest::DbClearNetwork);
+                    }
+                    PendingDbOp::RemovePlayer { target } => {
+                        queue_desktop_plan_request(
+                            rt,
+                            DesktopPlanRequest::DbRemovePlayer { target },
+                        );
+                    }
+                }
+                sync_plan_export(rt, server.get_player_count());
+            }
+        });
+        Ok(1)
+    }
+}
+
+struct CancelDbHandler;
+
+impl CommandHandler for CancelDbHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let _ = with_runtime(|rt| {
+            rt.pending_db_op = None;
+        });
+        Ok(1)
+    }
+}
+
+struct ImportHandler;
+
+impl CommandHandler for ImportHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
         Ok(1)
     }
 }

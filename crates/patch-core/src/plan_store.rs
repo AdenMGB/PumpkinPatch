@@ -2137,6 +2137,7 @@ mod ingest_tests {
             }],
             registration_completions: vec![],
             web_admin_actions: vec![],
+            desktop_plan_requests: vec![],
         }
     }
 
@@ -2221,6 +2222,7 @@ mod ingest_tests {
             performance_samples: vec![],
             registration_completions: vec![],
             web_admin_actions: vec![],
+            desktop_plan_requests: vec![],
         };
         let report = ingest_payload(&pool, "net-geo", &payload)
             .await

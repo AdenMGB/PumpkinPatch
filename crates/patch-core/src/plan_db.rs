@@ -1,0 +1,145 @@
+//! Plan database maintenance (indepth.md §7 `db *` commands).
+
+use crate::error::{Error, Result};
+use sqlx::{Row, SqlitePool};
+use std::path::{Path, PathBuf};
+
+pub struct PlanDbBackupReport {
+    pub path: PathBuf,
+    pub bytes: u64,
+}
+
+pub async fn optimize_plan_sqlite(pool: &SqlitePool) -> Result<()> {
+    sqlx::query("VACUUM").execute(pool).await?;
+    sqlx::query("ANALYZE").execute(pool).await?;
+    Ok(())
+}
+
+pub async fn backup_plan_sqlite_file(db_path: &Path, backups_dir: &Path) -> Result<PlanDbBackupReport> {
+    if !db_path.exists() {
+        return Err(Error::NotFound(format!(
+            "database file not found: {}",
+            db_path.display()
+        )));
+    }
+    std::fs::create_dir_all(backups_dir)?;
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let dest = backups_dir.join(format!("plan-backup-{}.db", stamp));
+    std::fs::copy(db_path, &dest)?;
+    let bytes = std::fs::metadata(&dest)?.len();
+    Ok(PlanDbBackupReport { path: dest, bytes })
+}
+
+/// GDPR erasure — removes a player and dependent rows across Plan tables.
+pub async fn remove_plan_player(pool: &SqlitePool, _network_id: &str, target: &str) -> Result<u64> {
+    let row = sqlx::query("SELECT id, uuid FROM plan_users WHERE uuid = ? COLLATE NOCASE OR name = ? COLLATE NOCASE LIMIT 1")
+        .bind(target)
+        .bind(target)
+        .fetch_optional(pool)
+        .await?;
+
+    let Some(row) = row else {
+        return Err(Error::NotFound(format!("plan user '{target}' not found")));
+    };
+    let user_id: i64 = row.get("id");
+    let uuid: String = row.get("uuid");
+
+    let kills = sqlx::query(
+        "DELETE FROM plan_kills WHERE killer_uuid = ? COLLATE NOCASE OR victim_uuid = ? COLLATE NOCASE",
+    )
+    .bind(&uuid)
+    .bind(&uuid)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    let deleted = sqlx::query("DELETE FROM plan_users WHERE id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(kills + deleted)
+}
+
+/// Drops analytics for one network (servers, sessions, performance samples).
+pub async fn clear_plan_network_data(pool: &SqlitePool, network_id: &str) -> Result<u64> {
+    let server_ids: Vec<i64> = sqlx::query_scalar(
+        "SELECT id FROM plan_servers WHERE network_id = ?",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut rows = 0u64;
+    for sid in server_ids {
+        for stmt in [
+            "DELETE FROM plan_sessions WHERE server_id = ?",
+            "DELETE FROM plan_commandusages WHERE server_id = ?",
+            "DELETE FROM plan_tps WHERE server_id = ?",
+            "DELETE FROM plan_user_info WHERE server_id = ?",
+            "DELETE FROM plan_ping WHERE server_id = ?",
+            "DELETE FROM plan_nicknames WHERE server_id = ?",
+        ] {
+            let n = sqlx::query(stmt)
+                .bind(sid)
+                .execute(pool)
+                .await?
+                .rows_affected();
+            rows += n;
+        }
+    }
+    let n = sqlx::query("DELETE FROM plan_servers WHERE network_id = ?")
+        .bind(network_id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    rows += n;
+    Ok(rows)
+}
+
+pub async fn process_desktop_plan_requests(
+    pool: &SqlitePool,
+    network_id: &str,
+    db_path: &Path,
+    backups_dir: &Path,
+    requests: &[patch_analytics_protocol::DesktopPlanRequest],
+) -> Result<u32> {
+    let mut applied = 0u32;
+    for req in requests {
+        let ok = match req {
+            patch_analytics_protocol::DesktopPlanRequest::DbOptimize => {
+                optimize_plan_sqlite(pool).await.is_ok()
+            }
+            patch_analytics_protocol::DesktopPlanRequest::DbBackup { label } => {
+                let dir = backups_dir.join(label.replace('/', "_"));
+                backup_plan_sqlite_file(db_path, &dir).await.is_ok()
+            }
+            patch_analytics_protocol::DesktopPlanRequest::DbRemovePlayer { target } => {
+                remove_plan_player(pool, network_id, target).await.is_ok()
+            }
+            patch_analytics_protocol::DesktopPlanRequest::DbClearNetwork => {
+                clear_plan_network_data(pool, network_id).await.is_ok()
+            }
+        };
+        if ok {
+            applied += 1;
+        }
+    }
+    Ok(applied)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn optimize_runs_on_memory_db() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::plan_store::ensure_plan_schema(&pool).await.unwrap();
+        optimize_plan_sqlite(&pool).await.unwrap();
+    }
+}

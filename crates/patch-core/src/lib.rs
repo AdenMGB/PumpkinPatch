@@ -8,6 +8,7 @@ mod plan_overviews;
 mod plan_perf;
 mod plan_query;
 mod plan_store;
+mod plan_db;
 mod plan_sync;
 mod plan_auth;
 mod plan_extension;
@@ -87,6 +88,10 @@ pub use plan_overviews::{
     online_overview_v1, performance_overview_v1, playerbase_overview_v1, retention_v1,
     PlanOnlineOverviewV1, PlanPerformanceOverviewV1, PlanPlayerbaseOverviewV1, PlanRetentionPlayerRow,
     PlanRetentionV1,
+};
+pub use plan_db::{
+    backup_plan_sqlite_file, clear_plan_network_data, optimize_plan_sqlite,
+    process_desktop_plan_requests, remove_plan_player, PlanDbBackupReport,
 };
 pub use plan_sync::sync_network_plan_exports;
 pub use db::Database;

@@ -11,7 +11,7 @@ pub const PLUGIN_DATA_DIR_NAME: &str = "PatchPlan";
 pub const CONFIG_FILENAME: &str = "patch-config.json";
 pub const EXPORT_FILENAME: &str = "export.json";
 pub const STATE_FILENAME: &str = "state.json";
-pub const EXPORT_SCHEMA_VERSION: u32 = 6;
+pub const EXPORT_SCHEMA_VERSION: u32 = 7;
 pub const MAX_PERFORMANCE_SAMPLES: usize = 576;
 pub const MAX_RECENT_PVP_KILLS: usize = 150;
 pub const MAX_COMPLETED_SESSIONS_PER_PLAYER: usize = 96;
@@ -205,6 +205,16 @@ pub enum WebAdminAction {
     },
 }
 
+/// Console `/plan db *` requests executed on the Pumpkin Patch desktop Plan SQLite store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum DesktopPlanRequest {
+    DbOptimize,
+    DbBackup { label: String },
+    DbRemovePlayer { target: String },
+    DbClearNetwork,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyticsPayload {
     pub schema_version: u32,
@@ -235,6 +245,8 @@ pub struct AnalyticsPayload {
     pub registration_completions: Vec<RegistrationCompletion>,
     #[serde(default)]
     pub web_admin_actions: Vec<WebAdminAction>,
+    #[serde(default)]
+    pub desktop_plan_requests: Vec<DesktopPlanRequest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -341,6 +353,7 @@ mod tests {
             performance_samples: vec![],
             registration_completions: vec![],
             web_admin_actions: vec![],
+            desktop_plan_requests: vec![],
         };
         let sig = sign_payload(&payload, "test-secret").unwrap();
         let export = SignedExport {
