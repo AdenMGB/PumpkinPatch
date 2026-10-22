@@ -27,6 +27,28 @@ const planProfileUuid = ref<string | null>(null)
 const installPlanMessage = ref<string | null>(null)
 const installPlanBannerError = ref(false)
 
+const regUsername = ref('')
+const regPassword = ref('')
+const regCode = ref<string | null>(null)
+const regExpires = ref<number | null>(null)
+const regError = ref<string | null>(null)
+const regLoading = ref(false)
+
+async function submitPlanRegistration() {
+  regError.value = null
+  regCode.value = null
+  regLoading.value = true
+  try {
+    const res = await api.planAuthRegisterStart(id.value, regUsername.value.trim(), regPassword.value)
+    regCode.value = res.code
+    regExpires.value = res.expires_ms
+  } catch (e: unknown) {
+    regError.value = e instanceof Error ? e.message : 'Registration failed'
+  } finally {
+    regLoading.value = false
+  }
+}
+
 const { data: networkSummary } = useQuery({
   queryKey: ['network', id],
   queryFn: () => api.networkGet(id.value),
@@ -563,6 +585,38 @@ const kpi = computed(() => {
     >
       {{ installPlanMessage }}
     </p>
+
+    <PpCard padding="md" class="plan-register-card" data-tauri-drag-region-exclude>
+      <h3 class="section-title">Plan web access</h3>
+      <p class="pp-muted">
+        Create a staff or player web account (indepth.md §5.2). After you get a code, run
+        <code class="pp-code">/plan register &lt;code&gt;</code> in-game, then trigger analytics sync.
+      </p>
+      <div class="plan-register-form">
+        <label>
+          Username
+          <input v-model="regUsername" type="text" autocomplete="username" />
+        </label>
+        <label>
+          Password
+          <input v-model="regPassword" type="password" autocomplete="new-password" />
+        </label>
+        <PpButton size="sm" :loading="regLoading" @click="submitPlanRegistration">
+          Request registration code
+        </PpButton>
+      </div>
+      <p v-if="regError" class="install-banner install-banner--error">{{ regError }}</p>
+      <div v-if="regCode" class="plan-register-code">
+        <p>
+          Your code:
+          <strong class="pp-code">{{ regCode }}</strong>
+        </p>
+        <p class="pp-muted">
+          Valid until {{ regExpires ? new Date(regExpires).toLocaleString() : '—' }}. Use
+          <code class="pp-code">/plan register {{ regCode }}</code> on a server with Patch Plan.
+        </p>
+      </div>
+    </PpCard>
 
     <PpCard
       v-if="exportIssues.length"
@@ -1476,6 +1530,37 @@ const kpi = computed(() => {
   font-size: 0.85rem;
   color: var(--color-text);
 }
+.plan-register-card {
+  margin-bottom: 1rem;
+}
+.plan-register-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-top: 0.75rem;
+}
+.plan-register-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+.plan-register-form input {
+  min-width: 10rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-bg-elevated);
+  color: inherit;
+}
+.plan-register-code {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
 .install-banner--error {
   border-color: rgba(231, 76, 60, 0.45);
   background: rgba(231, 76, 60, 0.12);

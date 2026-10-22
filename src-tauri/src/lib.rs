@@ -89,6 +89,9 @@ pub fn run() {
             api::orchestration::analytics_plan_export_static,
             api::orchestration::analytics_harvest_sync,
             api::plan_http::plan_http_start,
+            api::plan_auth::plan_auth_register_start,
+            api::platform::crow_swarm_run,
+            api::platform::patch_cas_put_bytes,
             api::telemetry::subscribe_live_telemetry,
             api::plugins_resolve::plugins_resolve_install_order,
         ])

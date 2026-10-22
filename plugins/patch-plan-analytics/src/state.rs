@@ -49,6 +49,7 @@ pub struct RuntimeState {
     pub online_ping: HashMap<String, OnlinePingTrack>,
     pub server_enabled_at: i64,
     pub registration_completions: Vec<patch_analytics_protocol::RegistrationCompletion>,
+    pub vineyard_sink: Option<pumpkin_hook_sdk::TelemetrySink>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,9 +84,42 @@ pub fn sample_performance(rt: &mut RuntimeState, online: u32, tick_period: f64) 
                 let drain = rt.performance_samples.len() - MAX_PERFORMANCE_SAMPLES;
                 rt.performance_samples.drain(0..drain);
             }
+            emit_vineyard_telemetry(rt, online, mspt);
         }
     }
     rt.last_perf_instant = Some(now);
+}
+
+fn instance_root_from_data_folder(data_folder: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(data_folder);
+    path.parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+}
+
+fn server_id_bytes(server_id: &str) -> [u8; 16] {
+    uuid::Uuid::parse_str(server_id)
+        .map(|u| *u.as_bytes())
+        .unwrap_or([0u8; 16])
+}
+
+fn emit_vineyard_telemetry(rt: &mut RuntimeState, online: u32, mspt: f64) {
+    let root = instance_root_from_data_folder(&rt.data_folder);
+    let root = match root {
+        Some(r) => r,
+        None => return,
+    };
+    if rt.vineyard_sink.is_none() {
+        let id = server_id_bytes(&rt.config.server_id);
+        rt.vineyard_sink = Some(pumpkin_hook_sdk::TelemetrySink::open(&id, &root));
+    }
+    if let Some(sink) = &mut rt.vineyard_sink {
+        let _ = sink.emit_host_sample(
+            online.min(u16::MAX as u32) as u16,
+            (mspt * 1000.0).clamp(0.0, 1_000_000.0) as u32,
+        );
+    }
 }
 
 pub fn unix_now() -> i64 {

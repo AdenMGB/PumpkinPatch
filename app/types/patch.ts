@@ -50,6 +50,11 @@ export interface AppSettings {
   gourd_enabled: boolean
 }
 
+export interface PlanRegisterStartResponse {
+  code: string
+  expires_ms: number
+}
+
 export interface TopologyNode {
   id: string
   kind: string

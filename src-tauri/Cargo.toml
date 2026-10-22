@@ -18,6 +18,8 @@ patch-plan-http = { path = "../crates/patch-plan-http" }
 vineyard-protocol = { path = "../crates/vineyard-protocol" }
 velocity-bridge = { path = "../crates/velocity-bridge" }
 patch-plugin-resolve = { path = "../crates/patch-plugin-resolve" }
+crow-swarm = { path = "../crates/crow-swarm" }
+patch-cas = { path = "../crates/patch-cas" }
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

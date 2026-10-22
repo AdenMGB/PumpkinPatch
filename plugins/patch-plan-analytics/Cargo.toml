@@ -17,3 +17,5 @@ patch-plan-core = { path = "../../crates/patch-plan-core" }
 pumpkin-plugin-api = { path = "../../pumpkin/crates/pumpkin-plugin-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+pumpkin-hook-sdk = { path = "../../crates/pumpkin-hook-sdk" }
+uuid = { version = "1", features = ["v4"] }

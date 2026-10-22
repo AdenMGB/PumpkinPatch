@@ -46,6 +46,8 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
             ),
         )
         .then(CommandNode::literal("export").execute(ExportHandler))
+        .then(CommandNode::literal("server").execute(ServerLinkHandler))
+        .then(CommandNode::literal("users").execute(UsersHandler))
         .then(CommandNode::literal("db").then(CommandNode::literal("status").execute(DbStatusHandler)));
     context.register_command(cmd, "patchplan.command");
     Ok(())
@@ -359,6 +361,49 @@ impl CommandHandler for PlayerLinkHandler {
                 "§6Plan§r — profile lookup for §f{}§r (synced via Plan HTTP `/v1/player`).",
                 target
             )),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+struct ServerLinkHandler;
+
+impl CommandHandler for ServerLinkHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let url = with_runtime(|rt| {
+            format!(
+                "§6Plan§r server §f{}§r — open Analytics in Pumpkin Patch or Plan HTTP `/v1/serverOverview?server={}`",
+                rt.config.server_name,
+                rt.config.server_id
+            )
+        })
+        .unwrap_or_else(|| "§7Plan server link unavailable.".into());
+        player.send_system_message(TextComponent::text(&url), false);
+        Ok(1)
+    }
+}
+
+struct UsersHandler;
+
+impl CommandHandler for UsersHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        player.send_system_message(
+            TextComponent::text(
+                "§6Plan web users§r — manage accounts in Pumpkin Patch Analytics → Plan web access, or Plan HTTP after sync.",
+            ),
             false,
         );
         Ok(1)

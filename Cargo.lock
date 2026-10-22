@@ -3481,6 +3481,8 @@ dependencies = [
 name = "pumpkin-patch"
 version = "0.1.0"
 dependencies = [
+ "crow-swarm",
+ "patch-cas",
  "patch-core",
  "patch-plan-http",
  "patch-plugin-resolve",

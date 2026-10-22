@@ -54,6 +54,23 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_player_online_placeholder() {
+        let ctx = PlanPlaceholderContext {
+            players_online: 12,
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_players_online%", &ctx).as_deref(),
+            Some("12")
+        );
+    }
+}
+
 fn format_duration(secs: u64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;

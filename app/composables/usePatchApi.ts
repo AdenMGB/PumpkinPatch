@@ -251,6 +251,12 @@ export function usePatchApi() {
       invoke<string>('network_hot_wire_server_to_proxy', { networkId, spec }),
     planHttpStart: (networkId: string) =>
       invoke<string>('plan_http_start', { networkId }),
+    planAuthRegisterStart: (networkId: string, username: string, password: string) =>
+      invoke<import('~/types/patch').PlanRegisterStartResponse>('plan_auth_register_start', {
+        networkId,
+        username,
+        password,
+      }),
     analyticsPlanExportStatic: (networkId: string, serverId: string) =>
       invoke<string>('analytics_plan_export_static', { networkId, serverId }),
     analyticsHarvestSync: (networkId: string) =>

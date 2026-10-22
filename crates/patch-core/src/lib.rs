@@ -44,6 +44,7 @@ pub use analytics::{
     aggregate_network_analytics, generate_export_secret, read_server_analytics,
     write_patch_plan_config, NetworkAnalyticsOverview, ServerAnalyticsSnapshot,
 };
+pub use plan_store::ensure_plan_schema;
 pub use plan_store::{
     graph_players_online, list_command_usages, list_kills, list_players_table, list_sessions,
     list_join_addresses, network_overview_v1, ping_table_v1, player_profile_v1, player_versus_v1,

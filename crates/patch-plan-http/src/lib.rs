@@ -64,6 +64,8 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
+        .route("/v1/errors", get(errors_diagnostics))
+        .route("/v1/docs", get(openapi_docs))
         .with_state(state);
     if let Some(dir) = export_dir {
         if dir.exists() {
@@ -357,6 +359,45 @@ async fn query(
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+async fn errors_diagnostics(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    let rows = sqlx::query_as::<_, (i64, String, String, i32)>(
+        "SELECT time, request_method, request_uri, response_code FROM plan_access_log ORDER BY time DESC LIMIT 50",
+    )
+    .fetch_all(&st.pool)
+    .await;
+    match rows {
+        Ok(entries) => {
+            let list = entries
+                .into_iter()
+                .map(|(time, method, uri, code)| {
+                    serde_json::json!({
+                        "time_ms": time,
+                        "method": method,
+                        "uri": uri,
+                        "response_code": code,
+                    })
+                })
+                .collect::<Vec<_>>();
+            Json(serde_json::json!({ "access_log": list })).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn openapi_docs() -> impl IntoResponse {
+    Json(serde_json::json!({
+        "openapi": "3.0.3",
+        "info": { "title": "Pumpkin Patch Plan API", "version": "1.0.0" },
+        "paths": {
+            "/v1/serverOverview": { "get": { "summary": "Server overview KPIs" } },
+            "/v1/query": { "post": { "summary": "Cohort query builder" } },
+            "/v1/auth/register": { "post": { "summary": "Start web account registration" } },
+            "/v1/auth/login": { "post": { "summary": "Web login" } }
+        }
+    }))
+    .into_response()
 }
 
 async fn theme(Query(q): Query<ServerQuery>) -> impl IntoResponse {
