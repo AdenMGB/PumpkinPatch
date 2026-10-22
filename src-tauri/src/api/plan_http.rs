@@ -1,6 +1,8 @@
 use super::Result;
 use crate::state::AppStateHandle;
-use patch_core::{aggregate_network_analytics, sync_network_plan_exports};
+use patch_core::{
+    aggregate_network_analytics, default_export_dir, sync_network_plan_exports,
+};
 use patch_plan_http::PlanHttpState;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -32,10 +34,12 @@ pub async fn plan_http_start(
         .parse()
         .map_err(|e| patch_core::Error::InvalidState(format!("invalid plan http bind: {e}")))?;
 
+    let export_dir = default_export_dir(std::path::Path::new(&network.data_path));
     let http_state = PlanHttpState {
         network_id: network.id.to_string(),
         pool: inner.db.pool().clone(),
         online_by_server: Arc::new(online_by_server),
+        static_export_dir: Some(export_dir),
     };
 
     tokio::spawn(async move {

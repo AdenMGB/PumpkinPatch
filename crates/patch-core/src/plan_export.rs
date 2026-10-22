@@ -77,6 +77,36 @@ pub async fn export_plan_static_bundle(
         json!(network_overview_v1(pool, network_id, network_servers).await?),
     )?;
     write("theme-default.json", plan_theme_json("default"))?;
+    write_plan_export_index(export_dir)?;
+    Ok(())
+}
+
+pub fn write_plan_export_index(export_dir: &Path) -> Result<()> {
+    let html = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Pumpkin Patch Plan Export</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; background: #0f172a; color: #e2e8f0; }
+    a { color: #f97316; }
+    li { margin: 0.35rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Plan static export</h1>
+  <p>Pre-rendered JSON bundles for offline hosting (indepth.md §6.2). Pair with Plan React dashboard assets or Pumpkin Patch Analytics UI.</p>
+  <ul>
+    <li><a href="serverOverview.json">serverOverview.json</a></li>
+    <li><a href="onlineOverview.json">onlineOverview.json</a></li>
+    <li><a href="players.json">players.json</a></li>
+    <li><a href="networkOverview.json">networkOverview.json</a></li>
+    <li><a href="theme-default.json">theme-default.json</a></li>
+  </ul>
+</body>
+</html>"#;
+    std::fs::write(export_dir.join("index.html"), html)?;
     Ok(())
 }
 

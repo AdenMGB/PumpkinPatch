@@ -58,6 +58,11 @@ async fn sync_server_plan_export(
     let signed: patch_analytics_protocol::SignedExport = serde_json::from_str(&raw)?;
     patch_analytics_protocol::verify_signed_export(&signed, export_secret)
         .map_err(crate::error::Error::InvalidState)?;
+    let _ = crate::plan_auth::process_registration_completions(
+        pool,
+        &signed.payload.registration_completions,
+    )
+    .await;
     let report = ingest_payload(pool, &network.id.to_string(), &signed.payload).await?;
     if let Ok(row) = sqlx::query("SELECT id FROM plan_servers WHERE uuid = ?")
         .bind(server.id.to_string())

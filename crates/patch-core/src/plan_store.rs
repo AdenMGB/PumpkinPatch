@@ -205,6 +205,14 @@ CREATE TABLE IF NOT EXISTS plan_access_log (
     request_uri TEXT NOT NULL,
     response_code INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS plan_pending_registration (
+    code TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    salted_pass_hash TEXT NOT NULL,
+    created_ms BIGINT NOT NULL,
+    expires_ms BIGINT NOT NULL
+);
 ";
 
 pub async fn ensure_plan_schema(pool: &SqlitePool) -> Result<()> {
@@ -2127,6 +2135,7 @@ mod ingest_tests {
                 mspt_avg: 52.0,
                 players_online: 2,
             }],
+            registration_completions: vec![],
         }
     }
 
@@ -2209,6 +2218,7 @@ mod ingest_tests {
             command_usages: Default::default(),
             recent_pvp_kills: vec![],
             performance_samples: vec![],
+            registration_completions: vec![],
         };
         let report = ingest_payload(&pool, "net-geo", &payload)
             .await

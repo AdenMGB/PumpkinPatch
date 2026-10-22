@@ -176,6 +176,16 @@ pub struct AnalyticsEvent {
     pub detail: String,
 }
 
+/// In-game `/plan register <code>` completions synced via signed export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationCompletion {
+    pub code: String,
+    pub player_uuid: String,
+    pub player_name: String,
+    #[serde(default)]
+    pub grant_admin: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyticsPayload {
     pub schema_version: u32,
@@ -202,6 +212,8 @@ pub struct AnalyticsPayload {
     pub recent_pvp_kills: Vec<PvpKillRecord>,
     #[serde(default)]
     pub performance_samples: Vec<PerformanceSample>,
+    #[serde(default)]
+    pub registration_completions: Vec<RegistrationCompletion>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

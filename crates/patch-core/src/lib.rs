@@ -64,7 +64,11 @@ pub use plan_extension::{
     ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,
     PlanExtensionPlugin, PlanExtensionTab,
 };
-pub use plan_auth::{login as plan_web_login, validate_cookie as plan_validate_cookie, log_access as plan_log_access};
+pub use plan_auth::{
+    complete_web_registration, log_access as plan_log_access, login as plan_web_login,
+    process_registration_completions, start_web_registration, validate_cookie as plan_validate_cookie,
+    RegistrationStart,
+};
 pub use plan_export::{default_export_dir, export_plan_static_bundle};
 pub use plan_theme::plan_theme_json;
 pub use orchestration::{

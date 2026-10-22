@@ -48,6 +48,7 @@ pub struct RuntimeState {
     pub pending_geolocation: HashMap<String, String>,
     pub online_ping: HashMap<String, OnlinePingTrack>,
     pub server_enabled_at: i64,
+    pub registration_completions: Vec<patch_analytics_protocol::RegistrationCompletion>,
 }
 
 #[derive(Debug, Clone)]
@@ -527,6 +528,7 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
         command_usages: rt.command_usages.clone(),
         recent_pvp_kills: rt.recent_pvp_kills.clone(),
         performance_samples: rt.performance_samples.clone(),
+        registration_completions: rt.registration_completions.clone(),
     };
     let signature =
         patch_analytics_protocol::sign_payload(&payload, &rt.config.export_secret)?;
@@ -540,6 +542,29 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(tmp, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub fn queue_registration_completion(
+    rt: &mut RuntimeState,
+    code: &str,
+    player_uuid: &str,
+    player_name: &str,
+    grant_admin: bool,
+) {
+    rt.registration_completions.push(patch_analytics_protocol::RegistrationCompletion {
+        code: code.to_string(),
+        player_uuid: player_uuid.to_string(),
+        player_name: player_name.to_string(),
+        grant_admin,
+    });
+    if rt.registration_completions.len() > 32 {
+        let drain = rt.registration_completions.len() - 32;
+        rt.registration_completions.drain(0..drain);
+    }
+}
+
+pub fn drain_registration_completions(rt: &mut RuntimeState) {
+    rt.registration_completions.clear();
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

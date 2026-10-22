@@ -1,6 +1,9 @@
 //! In-game `/patchplan` and `/plan` commands (Plan §7 subset).
 
-use crate::state::{persist_state, player_id, unix_now, with_runtime, write_export};
+use crate::state::{
+    drain_registration_completions, persist_state, player_id, queue_registration_completion,
+    unix_now, with_runtime, write_export,
+};
 use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
 use pumpkin_plugin_api::command::{
     Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs,
@@ -395,7 +398,7 @@ impl CommandHandler for RegisterHandler {
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         let player = require_player(&sender)?;
-        let _code = match args.get_value("code") {
+        let code = match args.get_value("code") {
             Arg::Simple(s) => s,
             _ => {
                 return Err(CommandError::CommandFailed(
@@ -403,9 +406,17 @@ impl CommandHandler for RegisterHandler {
                 ));
             }
         };
+        let uuid = player_id(&player);
+        let name = player.get_display_name().get_text();
+        let _ = with_runtime(|rt| {
+            queue_registration_completion(rt, code, &uuid, &name, false);
+            write_export(rt, 1).ok();
+            drain_registration_completions(rt);
+            persist_state(rt).ok();
+        });
         player.send_system_message(
             TextComponent::text(
-                "§aRegistration code received§7 — sync via Pumpkin Patch Plan HTTP when linked.",
+                "§aPlan registration queued§7 — Pumpkin Patch will link your web account on the next analytics sync.",
             ),
             false,
         );

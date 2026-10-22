@@ -35,6 +35,10 @@ impl VineyardBus {
 
     pub fn publish_frame(&self, frame: &TickTelemetryFrame) -> Result<(), VineyardError> {
         let bytes = pack_frame(frame);
+        self.publish_raw(bytes)
+    }
+
+    pub fn publish_raw(&self, bytes: Vec<u8>) -> Result<(), VineyardError> {
         self.telemetry
             .send(bytes)
             .map_err(|_| VineyardError::NoSubscribers)?;

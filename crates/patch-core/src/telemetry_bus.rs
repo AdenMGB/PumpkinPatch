@@ -1,9 +1,51 @@
 //! Host-side Vineyard telemetry sampler (plangem.md §7.3 phase 1).
 
 use crate::state::AppState;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
-use vineyard_protocol::{ChunkHeatSample, TickTelemetryFrame, MAX_HOT_CHUNKS};
+use vineyard_bus::VineyardBus;
+use vineyard_protocol::{packed_frame_byte_length, ChunkHeatSample, TickTelemetryFrame};
+
+/// Tails `vineyard-telemetry.bin` written by `pumpkin-hook-sdk` on Pumpkin instances.
+pub fn spawn_instance_telemetry_tail(bus: VineyardBus, _server_id: Uuid, file: PathBuf) {
+    let frame_len = packed_frame_byte_length();
+    tokio::spawn(async move {
+        let mut offset: u64 = 0;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(75));
+        loop {
+            interval.tick().await;
+            let meta = tokio::fs::metadata(&file).await;
+            if meta.is_err() {
+                continue;
+            }
+            let len = meta.unwrap().len();
+            if len < offset + frame_len as u64 {
+                continue;
+            }
+            let mut file_handle = match tokio::fs::File::open(&file).await {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            if file_handle
+                .seek(std::io::SeekFrom::Start(offset))
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            while offset + frame_len as u64 <= len {
+                let mut buf = vec![0u8; frame_len];
+                if file_handle.read_exact(&mut buf).await.is_err() {
+                    break;
+                }
+                offset += frame_len as u64;
+                let _ = bus.publish_raw(buf);
+            }
+        }
+    });
+}
 
 pub fn spawn_host_telemetry_sampler(state: &AppState, server_id: Uuid, players_online: u32) {
     let bus = state.vineyard_bus.clone();

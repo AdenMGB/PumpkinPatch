@@ -44,6 +44,11 @@ pub struct RouteWireSpec {
     pub permission_gate: Option<String>,
 }
 
+/// Byte length of every `pack_frame` payload (always serializes `MAX_HOT_CHUNKS` slots).
+pub fn packed_frame_byte_length() -> usize {
+    70 + MAX_HOT_CHUNKS * 21
+}
+
 pub fn pack_frame(frame: &TickTelemetryFrame) -> Vec<u8> {
     let mut buf = Vec::with_capacity(128);
     buf.extend_from_slice(&frame.server_id);

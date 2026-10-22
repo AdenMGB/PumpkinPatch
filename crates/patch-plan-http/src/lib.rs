@@ -9,7 +9,7 @@ use axum::{
 };
 use patch_core::{
     execute_plan_query, extension_data_v1, list_join_addresses, list_kills, network_overview_v1,
-    plan_log_access, plan_web_login,
+    plan_log_access, plan_web_login, start_web_registration,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, PlanQueryRequest,
@@ -17,13 +17,16 @@ use patch_core::{
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
+use tower_http::services::ServeDir;
 
 #[derive(Clone)]
 pub struct PlanHttpState {
     pub network_id: String,
     pub pool: sqlx::SqlitePool,
     pub online_by_server: Arc<HashMap<String, u32>>,
+    pub static_export_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,7 +39,8 @@ struct ServerQuery {
 }
 
 pub fn router(state: PlanHttpState) -> Router {
-    Router::new()
+    let export_dir = state.static_export_dir.clone();
+    let mut router = Router::new()
         .route("/v1/serverOverview", get(server_overview))
         .route("/v1/onlineOverview", get(online_overview))
         .route("/v1/sessionsOverview", get(sessions_overview))
@@ -59,13 +63,44 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/query", post(query))
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
-        .with_state(state)
+        .route("/v1/auth/register", post(auth_register))
+        .with_state(state);
+    if let Some(dir) = export_dir {
+        if dir.exists() {
+            router = router.nest_service("/export", ServeDir::new(dir));
+        }
+    }
+    router
 }
 
 #[derive(Deserialize)]
 struct LoginBody {
     username: String,
     password: String,
+}
+
+#[derive(Deserialize)]
+struct RegisterBody {
+    username: String,
+    password: String,
+}
+
+async fn auth_register(
+    State(st): State<PlanHttpState>,
+    Json(body): Json<RegisterBody>,
+) -> impl IntoResponse {
+    match start_web_registration(&st.pool, &body.username, &body.password).await {
+        Ok(start) => {
+            let _ = plan_log_access(&st.pool, None, "POST", "/v1/auth/register", 200).await;
+            Json(serde_json::json!({
+                "code": start.code,
+                "expires_ms": start.expires_ms,
+                "message": "Run /plan register <code> in-game to link your Minecraft account."
+            }))
+            .into_response()
+        }
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 async fn auth_login(
@@ -303,8 +338,11 @@ async fn graph(
     }
 }
 
-async fn filters(State(st): State<PlanHttpState>) -> impl IntoResponse {
-    match plan_filters_catalog(&st.pool, &st.network_id).await {
+async fn filters(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    match plan_filters_catalog(&st.pool, &st.network_id, q.server.as_deref()).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -312,9 +350,10 @@ async fn filters(State(st): State<PlanHttpState>) -> impl IntoResponse {
 
 async fn query(
     State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
     Json(body): Json<PlanQueryRequest>,
 ) -> impl IntoResponse {
-    match execute_plan_query(&st.pool, &st.network_id, &body).await {
+    match execute_plan_query(&st.pool, &st.network_id, q.server.as_deref(), &body).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

@@ -92,6 +92,7 @@ impl Plugin for PatchPlanPlugin {
             pending_geolocation: Default::default(),
             online_ping: Default::default(),
             server_enabled_at: state::unix_now(),
+            registration_completions: Vec::new(),
         };
         let _ = RUNTIME.set(std::sync::Mutex::new(rt));
 
