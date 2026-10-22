@@ -15,6 +15,7 @@ use axum::{
 };
 use patch_core::{
     execute_plan_query, execute_readonly_sql, extension_data_v1, ingest_signed_export,
+    plan_data_clear_events_since,
     list_command_usages,
     list_join_addresses, list_kills, players_online_at,
     list_web_users, load_cached_plan_query, logout_web_user, network_overview_v1,
@@ -69,6 +70,7 @@ pub fn router(state: PlanHttpState) -> Router {
     let session_protected = Router::new()
         .route("/v1/query", get(query_by_token).post(query))
         .route("/v1/query/sql", post(query_sql_readonly))
+        .route("/v1/query/dataClearEvents", get(query_data_clear_events))
         .route("/v1/import", post(import_signed))
         .route("/v1/errors", get(errors_diagnostics))
         .route("/v1/filters", get(filters))
@@ -728,6 +730,26 @@ async fn query_by_token(
 #[derive(Deserialize)]
 struct QuerySqlBody {
     sql: String,
+}
+
+#[derive(Deserialize)]
+struct DataClearSinceQuery {
+    #[serde(default)]
+    since: i64,
+}
+
+async fn query_data_clear_events(
+    headers: HeaderMap,
+    State(st): State<PlanHttpState>,
+    Query(q): Query<DataClearSinceQuery>,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.query").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
+    let events = plan_data_clear_events_since(q.since);
+    Json(serde_json::json!({ "events": events })).into_response()
 }
 
 async fn query_sql_readonly(

@@ -111,6 +111,7 @@ pub async fn remove_plan_player(pool: &SqlitePool, _network_id: &str, target: &s
         .execute(pool)
         .await?
         .rows_affected();
+    crate::plan_data_clear::record_plan_player_data_cleared(&uuid);
     Ok(kills + deleted)
 }
 
