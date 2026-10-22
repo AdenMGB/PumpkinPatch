@@ -46,9 +46,24 @@ mod state;
 
 pub use analytics::{
     aggregate_network_analytics, generate_export_secret, read_server_analytics,
-    write_patch_plan_config, NetworkAnalyticsOverview, ServerAnalyticsSnapshot,
+    plan_export_is_proxy, write_patch_plan_config, NetworkAnalyticsOverview,
+    ServerAnalyticsSnapshot,
 };
 pub use plan_store::ensure_plan_schema;
+pub fn gourd_pool_scale_recommend(
+    current_ccu: u32,
+    active_backends: u32,
+    players_per_backend: u32,
+    hidden_ready: u32,
+) -> u32 {
+    gourd_proxy::predictive_scale_recommendation(
+        current_ccu,
+        active_backends,
+        players_per_backend,
+        hidden_ready,
+    )
+}
+
 pub use plan_store::{
     graph_players_online, list_command_usages, list_kills, list_players_table, list_sessions,
     players_online_at, player_statistics_map, statistics_v1, PlanPlayerOnlineName,
@@ -67,7 +82,8 @@ pub use plan_disk_cache::{read_disk_cache, write_disk_cache, DISK_CACHE_TTL_SECS
 pub use plan_json_cache::{PlanJsonCache, MEMORY_CACHE_MS, REFRESH_BARRIER_MS, with_plan_cache};
 pub use plan_query::{
     execute_plan_query, execute_readonly_sql, load_cached_plan_query, plan_filters_catalog,
-    PlanFilterTypeInfo, PlanFiltersCatalog, PlanQueryCohortView, PlanQueryRequest, PlanQueryResult,
+    ActivityIndexOnFilter, PlanFilterTypeInfo, PlanFiltersCatalog, PlanQueryCohortView,
+    PlanQueryRequest, PlanQueryResult,
 };
 pub use plan_extension::{
     ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,

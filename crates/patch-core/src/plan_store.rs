@@ -1281,6 +1281,27 @@ pub struct PlanPlayerTableRow {
     pub operator: bool,
 }
 
+pub async fn session_triples_for_user(pool: &SqlitePool, user_uuid: &str) -> Result<Vec<(i64, i64, u64)>> {
+    let session_rows = sqlx::query(
+        "SELECT session_start, session_end, afk_time FROM plan_sessions sess
+         JOIN plan_users u ON u.id = sess.user_id
+         WHERE u.uuid = ?",
+    )
+    .bind(user_uuid)
+    .fetch_all(pool)
+    .await?;
+    Ok(session_rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<i64, _>("session_start"),
+                r.get::<i64, _>("session_end"),
+                r.get::<i64, _>("afk_time") as u64,
+            )
+        })
+        .collect())
+}
+
 pub async fn list_players_table(
     pool: &SqlitePool,
     network_id: &str,
@@ -1331,25 +1352,7 @@ pub async fn list_players_table(
     let mut out = Vec::new();
     for row in rows {
         let user_uuid: String = row.get("uuid");
-        let session_rows = sqlx::query(
-            "SELECT session_start, session_end, afk_time FROM plan_sessions sess
-             JOIN plan_users u ON u.id = sess.user_id
-             WHERE u.uuid = ?",
-        )
-        .bind(&user_uuid)
-        .fetch_all(pool)
-        .await?;
-
-        let triples: Vec<(i64, i64, u64)> = session_rows
-            .iter()
-            .map(|r| {
-                (
-                    r.get::<i64, _>("session_start"),
-                    r.get::<i64, _>("session_end"),
-                    r.get::<i64, _>("afk_time") as u64,
-                )
-            })
-            .collect();
+        let triples = session_triples_for_user(pool, &user_uuid).await?;
         let (w1, w2, w3) = active_playtime_in_weeks(&triples, now_ms);
         let ai = ActivityIndex::calculate(w1, w2, w3, DEFAULT_PLAYTIME_THRESHOLD_MS);
         let active_playtime_ms = w1 + w2 + w3;

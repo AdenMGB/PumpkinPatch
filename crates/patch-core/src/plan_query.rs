@@ -59,6 +59,16 @@ pub struct PlanQueryRequest {
     /// Plan React `pluginNumbers` extension range filters.
     #[serde(default, rename = "pluginNumbers")]
     pub plugin_numbers: Vec<crate::plan_extension::PluginNumberFilter>,
+    /// Historical activity index filter (`activityIndexOn` in Plan React).
+    #[serde(default, rename = "activityIndexOn")]
+    pub activity_index_on: Option<ActivityIndexOnFilter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ActivityIndexOnFilter {
+    pub date: Option<i64>,
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -213,7 +223,7 @@ pub async fn plan_filters_catalog(
         PlanFilterTypeInfo {
             id: "activityIndexOn".into(),
             label: "Activity index on historical date".into(),
-            implemented: false,
+            implemented: true,
         },
         PlanFilterTypeInfo {
             id: "pluginsBooleanGroups".into(),
@@ -331,6 +341,7 @@ async fn run_plan_query_uncached(
 ) -> Result<PlanQueryResult> {
     let mut players = list_players_table(pool, network_id, server_uuid, 2000).await?;
     apply_query_filters(&mut players, request);
+    apply_activity_index_on_filter(pool, &mut players, request).await?;
     crate::plan_extension::filter_players_by_extension_query(
         &mut players,
         &request.plugins_boolean_groups,
@@ -571,9 +582,51 @@ fn sqlite_cell_json(row: &sqlx::sqlite::SqliteRow, idx: usize) -> serde_json::Va
         .unwrap_or(serde_json::Value::Null)
 }
 
+fn activity_index_at_ms(triples: &[(i64, i64, u64)], at_ms: i64) -> patch_plan_core::ActivityIndex {
+    use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
+    let (w1, w2, w3) = active_playtime_in_weeks(triples, at_ms);
+    ActivityIndex::calculate(w1, w2, w3, DEFAULT_PLAYTIME_THRESHOLD_MS)
+}
+
+async fn apply_activity_index_on_filter(
+    pool: &SqlitePool,
+    players: &mut Vec<PlanPlayerTableRow>,
+    request: &PlanQueryRequest,
+) -> Result<()> {
+    let Some(filter) = &request.activity_index_on else {
+        return Ok(());
+    };
+    let Some(at_ms) = filter.date else {
+        return Ok(());
+    };
+    for player in players.iter_mut() {
+        let triples = crate::plan_store::session_triples_for_user(pool, &player.uuid).await?;
+        let ai = activity_index_at_ms(&triples, at_ms);
+        player.activity_index = ai.value;
+        player.activity_group = ai.group.label().to_string();
+    }
+    if !filter.groups.is_empty() {
+        players.retain(|p| filter.groups.iter().any(|g| g == &p.activity_group));
+    } else if !request.activity_groups.is_empty() {
+        players.retain(|p| request.activity_groups.iter().any(|g| g == &p.activity_group));
+    }
+    if let Some(min) = request.min_activity_index {
+        players.retain(|p| p.activity_index >= min);
+    }
+    if let Some(max) = request.max_activity_index {
+        players.retain(|p| p.activity_index <= max);
+    }
+    Ok(())
+}
+
 /// In-memory filter used by `execute_plan_query` (unit-tested).
 pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &PlanQueryRequest) {
-    if !request.activity_groups.is_empty() {
+    let historical_ai = request
+        .activity_index_on
+        .as_ref()
+        .and_then(|f| f.date)
+        .is_some();
+    if !historical_ai && !request.activity_groups.is_empty() {
         players.retain(|p| request.activity_groups.iter().any(|g| g == &p.activity_group));
     }
     if !request.join_addresses.is_empty() {
@@ -584,11 +637,13 @@ pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &Plan
                 .any(|j| j.eq_ignore_ascii_case(&p.join_address))
         });
     }
-    if let Some(min) = request.min_activity_index {
-        players.retain(|p| p.activity_index >= min);
-    }
-    if let Some(max) = request.max_activity_index {
-        players.retain(|p| p.activity_index <= max);
+    if !historical_ai {
+        if let Some(min) = request.min_activity_index {
+            players.retain(|p| p.activity_index >= min);
+        }
+        if let Some(max) = request.max_activity_index {
+            players.retain(|p| p.activity_index <= max);
+        }
     }
     if let Some(min) = request.min_sessions {
         players.retain(|p| p.sessions >= min);
@@ -774,6 +829,30 @@ mod tests {
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
         assert_eq!(players[0].name, "Steve");
+    }
+
+    #[test]
+    fn activity_index_on_defers_current_activity_group_filter() {
+        let mut players = vec![sample_player("Active", 50.0, "a")];
+        let req = PlanQueryRequest {
+            activity_groups: vec!["Inactive".into()],
+            activity_index_on: Some(ActivityIndexOnFilter {
+                date: Some(1_700_000_000_000),
+                groups: vec![],
+            }),
+            ..PlanQueryRequest::default()
+        };
+        apply_query_filters(&mut players, &req);
+        assert_eq!(players.len(), 1);
+    }
+
+    #[test]
+    fn activity_index_at_ms_uses_session_windows() {
+        use patch_plan_core::ONE_WEEK_MS;
+        let at_ms = 3 * ONE_WEEK_MS;
+        let triples = vec![(at_ms - 86_400_000, at_ms - 43_200_000, 0)];
+        let ai = activity_index_at_ms(&triples, at_ms);
+        assert!(ai.value > 0.0);
     }
 
     #[tokio::test]

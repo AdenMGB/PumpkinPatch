@@ -168,7 +168,14 @@ async fn provision_server_with_token(
             .record_plugin_deployment("auto", &server.data_path, &path.to_string_lossy())
             .await?;
     }
-    write_patch_plan_config(instance.as_path(), server, network.id, token, join_address)?;
+    write_patch_plan_config(
+        instance.as_path(),
+        network,
+        server,
+        network.id,
+        token,
+        join_address,
+    )?;
     Ok(())
 }
 

@@ -546,6 +546,10 @@ export interface PlanQueryRequest {
     min?: number | null
     max?: number | null
   }>
+  activityIndexOn?: {
+    date?: number | null
+    groups?: string[]
+  }
 }
 
 export interface PlanQueryCohortView {

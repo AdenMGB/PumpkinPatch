@@ -4,8 +4,27 @@ use patch_core::{
     build_topology, default_export_dir, export_plan_static_bundle, hot_wire_velocity_toml,
     sync_harvest_from_plan_sqlite, NetworkTopology,
 };
+use serde::Deserialize;
 use uuid::Uuid;
 use vineyard_protocol::RouteWireSpec;
+
+#[derive(Deserialize)]
+pub struct GourdPoolScaleRecommendRequest {
+    pub current_ccu: u32,
+    pub active_backends: u32,
+    pub players_per_backend: u32,
+    pub hidden_ready: u32,
+}
+
+#[tauri::command]
+pub fn gourd_pool_scale_recommend(req: GourdPoolScaleRecommendRequest) -> u32 {
+    patch_core::gourd_pool_scale_recommend(
+        req.current_ccu,
+        req.active_backends,
+        req.players_per_backend,
+        req.hidden_ready,
+    )
+}
 
 #[tauri::command]
 pub async fn network_topology_get(
