@@ -1,0 +1,1 @@
+Built from https://github.com/plan-player-analytics/Plan Plan/react/dashboard (LGPL-3.0-or-later). Rebuild: node scripts/build-plan-react.mjs

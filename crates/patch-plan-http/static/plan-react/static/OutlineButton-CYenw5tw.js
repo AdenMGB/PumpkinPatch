@@ -1,0 +1,1 @@
+import{h as e,m as t}from"./authenticationHook-CSG-4-GM.js";import{t as n}from"./classNames-Bz_AAhrf.js";t();var r=e(),i=({id:e,className:t,disabled:i,onClick:a,children:o,style:s,variant:c})=>{let l;return c===`input`&&(l=` btn-input`),(0,r.jsx)(`button`,{id:e,className:n(`btn btn-outline-secondary`,t,l),onClick:a,disabled:i,style:s,children:o})};export{i as t};

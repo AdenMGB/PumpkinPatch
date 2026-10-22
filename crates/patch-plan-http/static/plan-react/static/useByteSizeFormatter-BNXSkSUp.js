@@ -1,0 +1,1 @@
+import{m as e,y as t}from"./authenticationHook-CSG-4-GM.js";import{t as n}from"./useDecimalFormatter-D1xIt-Ez.js";var r=t(e(),1),i=()=>{let{formatDecimals:e}=n(),t=(0,r.useCallback)(t=>{let n=Number(t);return Number.isNaN(n)?String(t):n>=1e6?`${e(n/1e6)} TB`:n>=1e3?`${e(n/1e3)} GB`:`${e(n)} MB`},[e]);return(0,r.useMemo)(()=>({formatByteSize:t}),[t])};export{i as t};

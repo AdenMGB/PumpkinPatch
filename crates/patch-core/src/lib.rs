@@ -75,7 +75,8 @@ pub use plan_auth::{
     login as plan_web_login, logout_web_user, process_registration_completions,
     process_web_admin_actions,
     set_web_user_group, start_web_registration, user_has_permission,
-    username_for_session_cookie, validate_cookie as plan_validate_cookie, PlanWebUser,
+    list_user_permissions, registration_code_pending, username_for_session_cookie,
+    validate_cookie as plan_validate_cookie, PlanWebUser,
     RegistrationStart,
 };
 pub use plan_export::{default_export_dir, export_plan_static_bundle};

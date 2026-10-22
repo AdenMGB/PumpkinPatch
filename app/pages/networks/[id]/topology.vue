@@ -15,6 +15,7 @@ const api = usePatchApi()
 const topology = ref<Awaited<ReturnType<typeof api.networkTopologyGet>> | null>(null)
 const message = ref('')
 const loading = ref(true)
+const poolState = ref('active')
 
 const nodes = computed(() => {
   if (!topology.value) return []
@@ -50,6 +51,7 @@ async function onConnect(params: Connection) {
       forced_hosts: [],
       priority_tier: 0,
       permission_gate: null,
+      pool_state: poolState.value,
     })
     topology.value = await api.networkTopologyGet(networkId.value)
   } catch (e) {
@@ -77,7 +79,19 @@ onMounted(async () => {
       </p>
     </header>
     <p v-if="loading" class="pp-muted">Loading…</p>
-    <p v-else-if="message" class="topology-msg">{{ message }}</p>
+    <template v-else>
+      <label class="pp-muted topology-pool">
+        Gourd pool state on hot-wire
+        <select v-model="poolState">
+          <option value="active">active</option>
+          <option value="hidden_ready">hidden_ready (hot spare)</option>
+          <option value="warming_up">warming_up</option>
+          <option value="in_game_locked">in_game_locked</option>
+          <option value="draining">draining</option>
+        </select>
+      </label>
+      <p v-if="message" class="topology-msg">{{ message }}</p>
+    </template>
     <ClientOnly>
       <VueFlow
         v-if="nodes.length"

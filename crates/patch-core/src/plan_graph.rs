@@ -12,6 +12,12 @@ pub async fn plan_graph(
     server_uuid: Option<&str>,
     graph_type: &str,
 ) -> Result<Value> {
+    let graph_type = match graph_type {
+        "joinAddressByDay" => "joinAddressesByDay",
+        "optimizedPerformance" => "tps",
+        "aggregatedPing" => "ping",
+        other => other,
+    };
     match graph_type {
         "playersOnline" => {
             let g = crate::plan_store::graph_players_online(pool, network_id, server_uuid).await?;

@@ -230,6 +230,31 @@ pub async fn delete_web_user(pool: &SqlitePool, username: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn list_user_permissions(pool: &SqlitePool, username: &str) -> Result<Vec<String>> {
+    let rows = sqlx::query(
+        "SELECT p.permission FROM plan_security s
+         JOIN plan_web_group g ON g.id = s.group_id
+         JOIN plan_web_group_to_permission gp ON gp.group_id = g.id
+         JOIN plan_web_permission p ON p.id = gp.permission_id
+         WHERE s.username = ? COLLATE NOCASE
+         ORDER BY p.permission",
+    )
+    .bind(username)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(|r| r.get("permission")).collect())
+}
+
+pub async fn registration_code_pending(pool: &SqlitePool, code: &str) -> Result<bool> {
+    let row: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM plan_pending_registration WHERE code = ? LIMIT 1",
+    )
+    .bind(code)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
+}
+
 pub async fn user_has_permission(pool: &SqlitePool, username: &str, permission: &str) -> Result<bool> {
     let row: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM plan_security s

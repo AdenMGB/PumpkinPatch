@@ -1,6 +1,7 @@
 //! Embedded Plan-shaped HTTP API for external dashboards (indepth.md §5.3).
 
 mod auth_layer;
+mod react_compat;
 
 use axum::{
     extract::{Query, State},
@@ -102,6 +103,17 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/player/json", get(player_gdpr_json))
         .route("/v1/graph", get(graph))
         .route("/v1/capabilities", get(capabilities))
+        .route("/v1/whoami", get(react_compat::whoami))
+        .route("/auth/login", post(react_compat::auth_login_form))
+        .route(
+            "/auth/register",
+            get(react_compat::auth_register_poll).post(react_compat::auth_register_form),
+        )
+        .route("/auth/logout", get(react_compat::auth_logout_get))
+        .route("/v1/serverIdentity", get(server_identity))
+        .route("/v1/onlineInsights", get(online_insights))
+        .route("/v1/statistics", get(statistics_stub))
+        .route("/v1/gameAllowlistBounces", get(game_allowlist_bounces_stub))
         .route("/", get(plan_dashboard_redirect))
         .route("/query", get(plan_query_redirect))
         .route("/app", get(plan_embedded_app))
@@ -120,7 +132,32 @@ pub fn router(state: PlanHttpState) -> Router {
             router = router.nest_service("/export", ServeDir::new(dir));
         }
     }
+    let react_static = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static/plan-react/static");
+    if react_static.exists() {
+        router = router.nest_service("/static", ServeDir::new(react_static));
+    }
     router
+}
+
+async fn serve_plan_react_asset(name: &'static str) -> impl IntoResponse {
+    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static/plan-react").join(name);
+    match tokio::fs::read(&file).await {
+        Ok(bytes) => {
+            let ctype = match file.extension().and_then(|e| e.to_str()) {
+                Some("js") => "application/javascript; charset=utf-8",
+                Some("css") => "text/css; charset=utf-8",
+                Some("json") => "application/json; charset=utf-8",
+                Some("ico") => "image/x-icon",
+                _ => "text/html; charset=utf-8",
+            };
+            (
+                [(axum::http::header::CONTENT_TYPE, ctype)],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -213,11 +250,16 @@ async fn capabilities() -> impl IntoResponse {
     Json(patch_plan_core::plan_capabilities_v1())
 }
 
-async fn plan_dashboard_redirect() -> impl IntoResponse {
+async fn plan_dashboard_redirect() -> axum::response::Response {
+    let react_index = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static/plan-react/index.html");
+    if react_index.exists() {
+        return serve_plan_react_asset("index.html").await.into_response();
+    }
     (
         StatusCode::TEMPORARY_REDIRECT,
         [(axum::http::header::LOCATION, "/app")],
     )
+        .into_response()
 }
 
 async fn plan_query_redirect() -> impl IntoResponse {
@@ -753,6 +795,62 @@ async fn openapi_docs(
         }
     }))
     .into_response()
+}
+
+async fn server_identity(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    let id = q.server.as_deref().unwrap_or("");
+    if id.is_empty() {
+        return (StatusCode::BAD_REQUEST, "server query parameter required").into_response();
+    }
+    let row = sqlx::query(
+        "SELECT uuid, name FROM plan_servers WHERE network_id = ? AND (uuid = ? OR name = ?) LIMIT 1",
+    )
+    .bind(&st.network_id)
+    .bind(id)
+    .bind(id)
+    .fetch_optional(&st.pool)
+    .await;
+    match row {
+        Ok(Some(r)) => {
+            use sqlx::Row;
+            Json(serde_json::json!({
+                "serverName": r.get::<String, _>("name"),
+                "serverUuid": r.get::<String, _>("uuid"),
+                "proxyMode": false,
+            }))
+            .into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "server not found").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn online_insights(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    match online_overview_v1(
+        &st.pool,
+        &st.network_id,
+        q.server.as_deref(),
+        live_online(&st, q.server.as_deref()),
+    )
+    .await
+    {
+        Ok(v) => Json(serde_json::json!({ "insights": v.insights })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn statistics_stub() -> impl IntoResponse {
+    Json(serde_json::json!({ "statistics": [] }))
+}
+
+async fn game_allowlist_bounces_stub() -> impl IntoResponse {
+    Json(serde_json::json!({ "bounces": [] }))
 }
 
 async fn plan_manage_page(

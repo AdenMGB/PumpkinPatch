@@ -1,0 +1,1 @@
+import{h as e,m as t,n}from"./authenticationHook-CSG-4-GM.js";import{f as r}from"./chunk-62JRHF6Z-C2ozenAr.js";import{t as i}from"./JoinAddresses-BMhWGoPi.js";t();var a=e(),o=()=>{let{identifier:e}=r(),{hasPermission:t}=n(),o=t(`page.server.join.addresses.graphs.time`);return(0,a.jsx)(i,{id:`server-join-addresses`,identifier:e,seeTime:o})};export{o as default};

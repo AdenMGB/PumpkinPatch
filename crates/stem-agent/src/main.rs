@@ -1,6 +1,9 @@
 //! `stem-agent` — lightweight headless daemon for remote Vineyard nodes.
 
+mod port_pool;
+
 use clap::Parser;
+use port_pool::PortPool;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -12,18 +15,29 @@ use vineyard_protocol::RouteWireSpec;
 struct Args {
     #[arg(long, default_value = "127.0.0.1:9876")]
     listen: SocketAddr,
+    #[arg(long, default_value_t = 25600)]
+    port_min: u16,
+    #[arg(long, default_value_t = 25700)]
+    port_max: u16,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     let bus = VineyardBus::new();
+    let ports = PortPool::new(args.port_min, args.port_max);
     let listener = TcpListener::bind(args.listen).await?;
-    eprintln!("stem-agent listening on {} (Vineyard bus ready)", args.listen);
+    eprintln!(
+        "stem-agent listening on {} (Vineyard bus ready, port pool {}-{})",
+        args.listen,
+        args.port_min,
+        args.port_max
+    );
 
     loop {
         let (mut socket, peer) = listener.accept().await?;
         let bus = bus.clone();
+        let ports = ports.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 512];
             let n = socket.read(&mut buf).await.unwrap_or(0);
@@ -38,6 +52,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let servers = bus.registered_server_count().await;
                 format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"peer\":\"{peer}\",\"routes\":{routes},\"servers\":{servers}}}\n"
+                )
+            } else if req.starts_with("POST /allocate-port") {
+                let port = ports.allocate().unwrap_or(0);
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"port\":{port}}}\n"
                 )
             } else if req.contains("POST /vineyard/route") {
                 let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);

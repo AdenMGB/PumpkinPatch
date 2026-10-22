@@ -1,0 +1,1 @@
+import{h as e,m as t,n}from"./authenticationHook-CSG-4-GM.js";import{f as r}from"./chunk-62JRHF6Z-C2ozenAr.js";import{t as i}from"./PlayerRetention-CZ2f6zRh.js";t();var a=e(),o=()=>{let{hasPermission:e}=n(),{identifier:t}=r(),o=e(`page.server.retention`);return(0,a.jsx)(i,{id:`server-retention`,identifier:t,seeRetention:o})};export{o as default};

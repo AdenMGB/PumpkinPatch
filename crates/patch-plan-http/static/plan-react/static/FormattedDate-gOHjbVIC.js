@@ -1,0 +1,1 @@
+import{h as e,m as t}from"./authenticationHook-CSG-4-GM.js";import{i as n}from"./useDateFormatter-B67-ULF2.js";t();var r=e(),i=({date:e,react:t,includeSeconds:i})=>{let{formatDate:a}=n(i);return t?(0,r.jsx)(`span`,{title:a(e),children:a(e)}):a(e)};export{i as t};

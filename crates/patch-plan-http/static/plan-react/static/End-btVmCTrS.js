@@ -1,0 +1,1 @@
+import{h as e,m as t}from"./authenticationHook-CSG-4-GM.js";t();var n=e(),r=({children:e})=>(0,n.jsx)(`span`,{className:`float-end`,children:e});export{r as t};

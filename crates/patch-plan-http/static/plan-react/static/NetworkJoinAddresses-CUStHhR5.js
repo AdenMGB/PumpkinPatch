@@ -1,0 +1,1 @@
+import{h as e,m as t,n}from"./authenticationHook-CSG-4-GM.js";import{t as r}from"./JoinAddresses-BMhWGoPi.js";t();var i=e(),a=()=>{let{hasPermission:e}=n(),t=e(`page.network.join.addresses.graphs.time`);return(0,i.jsx)(r,{id:`network-join-addresses`,identifier:null,seeTime:t})};export{a as default};

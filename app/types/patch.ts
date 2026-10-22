@@ -88,6 +88,8 @@ export interface RouteWireSpec {
   forced_hosts: string[]
   priority_tier: number
   permission_gate?: string | null
+  /** Gourd lifecycle: active | warming_up | hidden_ready | in_game_locked | draining */
+  pool_state?: string | null
 }
 
 export interface PingResult {
