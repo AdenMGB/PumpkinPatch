@@ -87,7 +87,6 @@ pub async fn plan_db_mark_server_uninstalled(
 }
 
 #[tauri::command]
-#[tauri::command]
 pub async fn plan_db_restore(
     state: tauri::State<'_, AppStateHandle>,
     backup_path: String,

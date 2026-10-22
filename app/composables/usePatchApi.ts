@@ -36,6 +36,9 @@ import type {
   PlanServerOverviewV1,
   PlanSessionRow,
   PlanPluginInstallResult,
+  PlanBackupEntry,
+  PlanDbBackupResponse,
+  PlanSyncReport,
   NetworkSummary,
   PingResult,
   ServerRecord,
@@ -332,5 +335,22 @@ export function usePatchApi() {
         playerUuid,
         outputDir: outputDir ?? null,
       }),
+    planDbListBackups: (networkId: string) =>
+      invoke<PlanBackupEntry[]>('plan_db_list_backups', { networkId }),
+    planDbOptimize: () => invoke<void>('plan_db_optimize'),
+    planDbBackup: (networkId: string, label?: string) =>
+      invoke<PlanDbBackupResponse>('plan_db_backup', {
+        networkId,
+        label: label ?? null,
+      }),
+    planDbRestore: (backupPath: string) => invoke<void>('plan_db_restore', { backupPath }),
+    planDbRemovePlayer: (networkId: string, target: string) =>
+      invoke<number>('plan_db_remove_player', { networkId, target }),
+    planDbClearNetwork: (networkId: string) =>
+      invoke<number>('plan_db_clear_network', { networkId }),
+    planDbMarkServerUninstalled: (networkId: string, server: string) =>
+      invoke<boolean>('plan_db_mark_server_uninstalled', { networkId, server }),
+    planImportSignedExport: (networkId: string, exportPath: string) =>
+      invoke<PlanSyncReport>('plan_import_signed_export', { networkId, exportPath }),
   }
 }

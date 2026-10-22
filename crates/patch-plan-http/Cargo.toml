@@ -17,6 +17,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 uuid = { version = "1", features = ["serde"] }
 axum-server = { version = "0.8.0", features = ["tls-rustls"] }
 openssl = { version = "0.10", features = ["vendored"] }
+jks = { version = "0.3.3", default-features = false, features = ["rand"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

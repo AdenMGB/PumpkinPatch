@@ -11,15 +11,15 @@ pub struct PlanBackupEntry {
     pub modified_ms: i64,
 }
 
-pub fn list_plan_backups(backups_root: &Path) -> Result<Vec<PlanBackupEntry>> {
-    if !backups_root.exists() {
-        return Ok(Vec::new());
+fn collect_backup_files(dir: &Path, entries: &mut Vec<PlanBackupEntry>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
     }
-    let mut entries = Vec::new();
-    for entry in std::fs::read_dir(backups_root)? {
+    for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if !path.is_file() {
+        if path.is_dir() {
+            collect_backup_files(&path, entries)?;
             continue;
         }
         if path.extension().and_then(|e| e.to_str()) != Some("db") {
@@ -37,6 +37,12 @@ pub fn list_plan_backups(backups_root: &Path) -> Result<Vec<PlanBackupEntry>> {
                 .unwrap_or(0),
         });
     }
+    Ok(())
+}
+
+pub fn list_plan_backups(backups_root: &Path) -> Result<Vec<PlanBackupEntry>> {
+    let mut entries = Vec::new();
+    collect_backup_files(backups_root, &mut entries)?;
     entries.sort_by_key(|e| std::cmp::Reverse(e.modified_ms));
     Ok(entries)
 }
@@ -214,6 +220,17 @@ pub async fn process_desktop_plan_requests(
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn list_backups_finds_nested_db_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("sqlite");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("plan-backup-test.db"), b"x").unwrap();
+        let list = list_plan_backups(dir.path()).unwrap();
+        assert_eq!(list.len(), 1);
+        assert!(list[0].path.contains("plan-backup-test.db"));
+    }
 
     #[tokio::test]
     async fn list_backups_empty_when_missing_dir() {

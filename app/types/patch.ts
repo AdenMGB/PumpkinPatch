@@ -743,6 +743,30 @@ export interface PlanPluginInstallResult {
   detail: string
 }
 
+export interface PlanBackupEntry {
+  path: string
+  bytes: number
+  modified_ms: number
+}
+
+export interface PlanDbBackupResponse {
+  path: string
+  bytes: number
+}
+
+export interface PlanSyncReport {
+  servers_synced: number
+  users_upserted: number
+  sessions_inserted: number
+  commands_merged: number
+  activity_points_inserted: number
+  kills_inserted: number
+  world_time_rows_inserted: number
+  performance_samples_inserted: number
+  geolocation_rows_upserted: number
+  ping_rows_inserted: number
+}
+
 export interface NetworkAnalyticsOverview {
   network_id: string
   network_name: string
