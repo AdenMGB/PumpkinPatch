@@ -5,6 +5,7 @@ mod client_ip;
 mod manage_api;
 mod plan_react;
 mod plan_resolver;
+mod plan_tls;
 mod react_compat;
 
 use axum::{
@@ -49,8 +50,8 @@ pub struct PlanHttpState {
     pub export_secret: String,
     /// When true, `X-Forwarded-For` / `X-Real-IP` populate `plan_access_log.from_ip` (indepth §5.2).
     pub trust_forwarded: bool,
-    /// PEM certificate + private key for HTTPS (indepth §5.2); both must exist on disk.
-    pub tls_pem: Option<(PathBuf, PathBuf)>,
+    /// HTTPS material (PEM or PKCS12) per indepth §5.2.
+    pub tls: Option<patch_core::PlanTlsMaterial>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -248,12 +249,10 @@ async fn auth_login(
 }
 
 pub async fn serve(bind: SocketAddr, state: PlanHttpState) -> Result<(), std::io::Error> {
-    let tls_pem = state.tls_pem.clone();
+    let tls_material = state.tls.clone();
     let app = router(state).layer(tower_http::cors::CorsLayer::permissive());
-    if let Some((cert, key)) = tls_pem {
-        let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
-            .await
-            .map_err(std::io::Error::other)?;
+    if let Some(material) = tls_material {
+        let tls = plan_tls::rustls_config_from(&material).await?;
         axum_server::bind_rustls(bind, tls)
             .serve(app.into_make_service())
             .await?;
@@ -1086,7 +1085,7 @@ mod tests {
             json_cache: PlanJsonCache::new(),
             export_secret: "test-secret".into(),
             trust_forwarded: true,
-            tls_pem: None,
+            tls: None,
         }
     }
 

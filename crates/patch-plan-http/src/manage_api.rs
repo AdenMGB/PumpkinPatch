@@ -2,14 +2,16 @@
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use patch_core::{
     delete_web_group, list_all_web_permissions, list_permissions_for_group, list_web_group_names,
-    save_permissions_for_group,
+    plan_log_access, plan_validate_cookie, save_permissions_for_group, username_for_session_cookie,
 };
+
+use crate::auth_layer::extract_plan_session;
 use serde::Deserialize;
 
 use crate::PlanHttpState;
@@ -52,13 +54,36 @@ pub async fn group_permissions(
 
 pub async fn save_group_permissions(
     State(st): State<PlanHttpState>,
+    headers: HeaderMap,
     Query(q): Query<GroupQuery>,
     Json(body): Json<Vec<String>>,
 ) -> impl IntoResponse {
     match save_permissions_for_group(&st.pool, &q.group, &body).await {
-        Ok(()) => Json(serde_json::json!({ "saved": q.group })).into_response(),
+        Ok(()) => {
+            let actor = session_username(&st, &headers).await;
+            let _ = plan_log_access(
+                &st.pool,
+                actor.as_deref(),
+                "POST",
+                "/v1/saveGroupPermissions",
+                200,
+            )
+            .await;
+            Json(serde_json::json!({ "saved": q.group })).into_response()
+        }
         Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
+}
+
+async fn session_username(st: &PlanHttpState, headers: &HeaderMap) -> Option<String> {
+    let session = extract_plan_session(headers)?;
+    if !plan_validate_cookie(&st.pool, &session).await.unwrap_or(false) {
+        return None;
+    }
+    username_for_session_cookie(&st.pool, &session)
+        .await
+        .ok()
+        .flatten()
 }
 
 pub async fn delete_group(

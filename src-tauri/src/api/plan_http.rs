@@ -1,7 +1,7 @@
 use super::Result;
 use crate::state::AppStateHandle;
 use patch_core::{
-    aggregate_network_analytics, default_export_dir, plan_tls_pem_paths,
+    aggregate_network_analytics, default_export_dir, resolve_plan_tls_material,
     sync_network_plan_exports,
 };
 use patch_plan_http::PlanHttpState;
@@ -37,8 +37,8 @@ pub async fn plan_http_start(
 
     let data_path = std::path::Path::new(&network.data_path);
     let export_dir = default_export_dir(data_path);
-    let tls_pem = plan_tls_pem_paths(data_path);
-    let scheme = if tls_pem.is_some() { "https" } else { "http" };
+    let tls = resolve_plan_tls_material(data_path);
+    let scheme = if tls.is_some() { "https" } else { "http" };
     let http_state = PlanHttpState {
         network_id: network.id.to_string(),
         pool: inner.db.pool().clone(),
@@ -47,7 +47,7 @@ pub async fn plan_http_start(
         json_cache: inner.plan_json_cache.clone(),
         export_secret: token.clone(),
         trust_forwarded: true,
-        tls_pem,
+        tls,
     };
 
     tokio::spawn(async move {

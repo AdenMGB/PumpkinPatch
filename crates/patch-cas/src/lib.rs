@@ -20,10 +20,38 @@ pub struct CasStore {
 
 impl CasStore {
     pub fn new(root: impl AsRef<Path>) -> Self {
-        Self {
-            root: root.as_ref().to_path_buf(),
+        let root = root.as_ref().to_path_buf();
+        Self::open(&root).unwrap_or_else(|_| Self {
+            root,
             index: HashMap::new(),
+        })
+    }
+
+    /// Opens a store and indexes existing `sha256_*` blobs on disk.
+    pub fn open(root: impl AsRef<Path>) -> std::io::Result<Self> {
+        let root = root.as_ref().to_path_buf();
+        std::fs::create_dir_all(&root)?;
+        let mut index = HashMap::new();
+        for entry in std::fs::read_dir(&root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with("sha256_") {
+                continue;
+            }
+            let digest = format!("sha256:{}", name.trim_start_matches("sha256_"));
+            let meta = entry.metadata()?;
+            let path = entry.path();
+            let object = CasObject {
+                digest: digest.clone(),
+                size: meta.len(),
+                path,
+            };
+            index.insert(digest, object);
         }
+        Ok(Self { root, index })
     }
 
     pub fn digest_bytes(data: &[u8]) -> String {
@@ -88,6 +116,16 @@ mod tests {
         let a = store.put_bytes(b"blueprint-v1").unwrap();
         let b = store.put_bytes(b"blueprint-v1").unwrap();
         assert_eq!(a.digest, b.digest);
+    }
+
+    #[test]
+    fn open_indexes_existing_blob() {
+        let root = std::env::temp_dir().join("patch-cas-open-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let mut store = CasStore::new(&root);
+        let object = store.put_bytes(b"persist-me").unwrap();
+        let reopened = CasStore::open(&root).unwrap();
+        assert!(reopened.get(&object.digest).is_some());
     }
 
     #[test]

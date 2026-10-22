@@ -20,6 +20,7 @@ const playersPerBackend = ref(40)
 const hiddenReady = ref(1)
 const scalePromote = ref<number | null>(null)
 const scaleLoading = ref(false)
+const scarecrow = ref<{ allowed: number; dropped: number } | null>(null)
 
 const nodes = computed(() => {
   if (!topology.value) return []
@@ -82,12 +83,21 @@ async function applyPoolPromotion() {
   }
 }
 
+async function refreshScarecrowStats() {
+  try {
+    scarecrow.value = await api.gourdScarecrowStats(networkId.value)
+  } catch {
+    scarecrow.value = null
+  }
+}
+
 async function refreshPoolScaleHint() {
   scaleLoading.value = true
   try {
     const [overview, topo] = await Promise.all([
       api.analyticsNetworkOverview(networkId.value),
       api.networkTopologyGet(networkId.value),
+      refreshScarecrowStats(),
     ])
     topology.value = topo
     const activeBackends = topo.nodes.filter((n) => n.kind === 'backend').length
@@ -162,6 +172,10 @@ onMounted(async () => {
           </button>
         </p>
       </div>
+      <p v-if="scarecrow" class="topology-scarecrow pp-muted">
+        Scarecrow Shield (plangem §6.7): {{ scarecrow.allowed }} handshakes allowed,
+        {{ scarecrow.dropped }} dropped
+      </p>
       <p v-if="message" class="topology-msg">{{ message }}</p>
     </template>
     <ClientOnly>

@@ -253,6 +253,10 @@ export function usePatchApi() {
       invoke<number>('gourd_pool_scale_recommend', { req }),
     gourdPoolPromote: (networkId: string, req: import('~/types/patch').GourdPoolPromoteRequest) =>
       invoke<string[]>('gourd_pool_promote', { networkId, req }),
+    gourdScarecrowStats: (networkId: string) =>
+      invoke<import('~/types/patch').GourdScarecrowStats | null>('gourd_scarecrow_stats', {
+        networkId,
+      }),
     planHttpStart: (networkId: string) =>
       invoke<string>('plan_http_start', { networkId }),
     planAuthRegisterStart: (networkId: string, username: string, password: string) =>

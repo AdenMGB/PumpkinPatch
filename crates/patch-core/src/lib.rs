@@ -20,6 +20,7 @@ mod plan_allowlist;
 mod plan_extension_sql;
 mod plan_export;
 mod plan_geolite;
+mod plan_tls;
 mod plan_theme;
 mod orchestration;
 mod harvest_sync;
@@ -119,6 +120,7 @@ pub use plan_web_groups::{
 };
 pub use plan_export::{default_export_dir, export_plan_static_bundle, plan_tls_pem_paths};
 pub use plan_geolite::{configure_network_geolocation, geolite_cache_path};
+pub use plan_tls::{resolve_plan_tls_material, PlanTlsMaterial};
 pub use plan_allowlist::game_allowlist_bounces_v1;
 pub use plan_theme::{plan_theme_json, plan_theme_json_db, save_plan_theme_json};
 pub use orchestration::{

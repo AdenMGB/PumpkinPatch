@@ -533,6 +533,11 @@ export interface GourdPoolPromoteRequest {
   count: number
 }
 
+export interface GourdScarecrowStats {
+  allowed: number
+  dropped: number
+}
+
 export interface PlanQueryRequest {
   activity_groups: string[]
   join_addresses: string[]
