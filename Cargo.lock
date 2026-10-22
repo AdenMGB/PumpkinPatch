@@ -3879,6 +3879,7 @@ dependencies = [
  "patch-core",
  "patch-plan-http",
  "patch-plugin-resolve",
+ "patchwork",
  "serde",
  "serde_json",
  "tauri",
@@ -3886,6 +3887,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-os",
  "tauri-plugin-window-state",
+ "tendril-voice",
  "thiserror 2.0.21",
  "tokio",
  "uuid",
@@ -4993,8 +4995,10 @@ name = "stem-agent"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "serde_json",
  "tokio",
  "vineyard-bus",
+ "vineyard-protocol",
 ]
 
 [[package]]

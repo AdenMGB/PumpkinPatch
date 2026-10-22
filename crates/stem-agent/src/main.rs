@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vineyard_bus::VineyardBus;
+use vineyard_protocol::RouteWireSpec;
 
 #[derive(Parser, Debug)]
 #[command(name = "stem-agent", about = "Pumpkin Patch stem-agent (Vineyard phase-1)")]
@@ -38,6 +39,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"peer\":\"{peer}\",\"routes\":{routes},\"servers\":{servers}}}\n"
                 )
+            } else if req.contains("POST /vineyard/route") {
+                let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+                let json = req[body_start..].trim();
+                let resp = if let Ok(spec) = serde_json::from_str::<RouteWireSpec>(json) {
+                    let _ = bus.publish_route_mutation(spec).await;
+                    "HTTP/1.1 204 No Content\r\n\r\n"
+                } else {
+                    "HTTP/1.1 400 Bad Request\r\n\r\n"
+                };
+                resp.to_string()
             } else {
                 "HTTP/1.1 404 Not Found\r\n\r\n".into()
             };

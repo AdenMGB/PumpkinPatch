@@ -39,6 +39,59 @@ pub fn read_pack_manifest(root: &Path) -> Result<PackManifest, String> {
     })
 }
 
+/// Walk a pack directory and record BLAKE3-style sha256 paths (PatchWork asset index).
+pub fn index_pack_assets(root: &Path) -> Result<BTreeMap<String, String>, String> {
+    let mut files = BTreeMap::new();
+    walk_pack(root, root, &mut files)?;
+    Ok(files)
+}
+
+fn walk_pack(
+    root: &Path,
+    dir: &Path,
+    out: &mut BTreeMap<String, String>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            walk_pack(root, &path, out)?;
+        } else if path.file_name().and_then(|n| n.to_str()) != Some("pack.mcmeta") {
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let hash = Sha256::digest(&bytes);
+            out.insert(rel, format!("sha256:{:x}", hash));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn indexes_pack_files() {
+        let dir = std::env::temp_dir().join("patchwork-index-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("assets/minecraft/textures")).unwrap();
+        let mut f = std::fs::File::create(dir.join("assets/minecraft/textures/a.png")).unwrap();
+        f.write_all(b"png").unwrap();
+        std::fs::write(
+            dir.join("pack.mcmeta"),
+            r#"{"pack":{"pack_format":34,"description":"t"}}"#,
+        )
+        .unwrap();
+        let map = index_pack_assets(&dir).unwrap();
+        assert!(map.contains_key("assets/minecraft/textures/a.png"));
+    }
+}
+
 pub fn merge_manifests(base: PackManifest, overlay: PackManifest) -> PackManifest {
     let mut files = base.files;
     files.extend(overlay.files);

@@ -1,7 +1,7 @@
 use super::Result;
 use crow_swarm::{SwarmPlan, SwarmReport};
 use patch_cas::CasStore;
-use patchwork::{merge_manifests, read_pack_manifest, PackManifest};
+use patchwork::{index_pack_assets, merge_manifests, read_pack_manifest, PackManifest};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,9 +20,15 @@ pub async fn patchwork_merge_pack_dirs(
     base_dir: String,
     overlay_dir: String,
 ) -> Result<PackManifest> {
-    let base = read_pack_manifest(std::path::Path::new(&base_dir))?;
-    let overlay = read_pack_manifest(std::path::Path::new(&overlay_dir))?;
-    Ok(merge_manifests(base, overlay))
+    let base_path = std::path::Path::new(&base_dir);
+    let overlay_path = std::path::Path::new(&overlay_dir);
+    let base = read_pack_manifest(base_path)?;
+    let overlay = read_pack_manifest(overlay_path)?;
+    let mut merged = merge_manifests(base, overlay);
+    let mut files = index_pack_assets(base_path)?;
+    files.extend(index_pack_assets(overlay_path)?);
+    merged.files = files;
+    Ok(merged)
 }
 
 #[tauri::command]

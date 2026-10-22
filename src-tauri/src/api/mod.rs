@@ -16,6 +16,7 @@ pub mod ping;
 pub mod server;
 pub mod settings;
 pub mod telemetry;
+pub mod voice;
 
 pub type Result<T> = std::result::Result<T, PatchApiError>;
 

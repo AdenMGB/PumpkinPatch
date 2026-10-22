@@ -70,6 +70,10 @@ pub struct PlanPlaceholderContext {
     pub peak_online_date_recent: String,
     pub favorite_server: String,
     pub tps_spikes_day: u32,
+    pub sessions_avg_length_day: u64,
+    pub sessions_avg_length_week: u64,
+    pub sessions_avg_length_month: u64,
+    pub sessions_avg_unique_players_day: u64,
     /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders.
     pub top_playtime: Vec<(String, u64, u64)>,
 }
@@ -119,6 +123,12 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_sessions_count_day" => Some(ctx.sessions_count_day.to_string()),
         "plan_sessions_count_week" => Some(ctx.sessions_count_week.to_string()),
         "plan_sessions_count_month" => Some(ctx.sessions_count_month.to_string()),
+        "plan_sessions_average_length_day" => Some(format_duration(ctx.sessions_avg_length_day)),
+        "plan_sessions_average_length_week" => Some(format_duration(ctx.sessions_avg_length_week)),
+        "plan_sessions_average_length_month" => Some(format_duration(ctx.sessions_avg_length_month)),
+        "plan_sessions_average_unique_players_day" => {
+            Some(ctx.sessions_avg_unique_players_day.to_string())
+        }
         "plan_server_time_zone" => Some(ctx.timezone_offset.clone()),
         "plan_server_time_zone_offset" => Some(ctx.timezone_offset.clone()),
         "plan_player_session_length" => {

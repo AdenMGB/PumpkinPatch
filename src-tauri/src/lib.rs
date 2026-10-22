@@ -105,6 +105,8 @@ pub fn run() {
             api::platform::crow_swarm_run,
             api::platform::patch_cas_put_bytes,
             api::platform::patchwork_merge_pack_dirs,
+            api::voice::tendril_voice_start,
+            api::voice::tendril_voice_stats,
             api::telemetry::subscribe_live_telemetry,
             api::plugins_resolve::plugins_resolve_install_order,
         ])

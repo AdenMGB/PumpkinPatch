@@ -45,6 +45,8 @@ struct ServerQuery {
     graph_type: Option<String>,
     name: Option<String>,
     token: Option<String>,
+    /// Plan ETag-style cache bypass (`?timestamp=` epoch ms).
+    timestamp: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +104,7 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/app", get(plan_embedded_app))
         .route("/app/", get(plan_embedded_app))
         .route("/register", get(plan_register_page))
+        .route("/theme-editor", get(plan_theme_editor_page))
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
@@ -223,6 +226,23 @@ async fn plan_register_page() -> impl IntoResponse {
     )
 }
 
+async fn plan_theme_editor_page(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if auth_layer::authorize_session_permission(&st, &headers, "access.theme.editor")
+        .await
+        .is_err()
+    {
+        return (StatusCode::UNAUTHORIZED, "access.theme.editor required").into_response();
+    }
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("../static/theme-editor.html"),
+    )
+        .into_response()
+}
+
 async fn persist_disk_cache(st: &PlanHttpState, key: &str, json: &str) {
     if let Some(dir) = &st.static_export_dir {
         let _ = write_disk_cache(dir, key, json);
@@ -315,12 +335,15 @@ async fn server_overview(
                 Some(uuid),
                 "",
             );
-            if let Some(hit) = try_disk_cache(&st, &key).await {
-                if let Ok(v) = serde_json::from_str::<patch_core::PlanServerOverviewV1>(&hit) {
-                    return Json(v).into_response();
+            let bypass = q.timestamp.is_some();
+            if !bypass {
+                if let Some(hit) = try_disk_cache(&st, &key).await {
+                    if let Ok(v) = serde_json::from_str::<patch_core::PlanServerOverviewV1>(&hit) {
+                        return Json(v).into_response();
+                    }
                 }
             }
-            match with_plan_cache(&st.json_cache, key.clone(), false, || async {
+            match with_plan_cache(&st.json_cache, key.clone(), bypass, || async {
                 server_overview_v1(
                     &st.pool,
                     &st.network_id,

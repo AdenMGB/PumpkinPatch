@@ -50,10 +50,17 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         .then(literal_aliases("servers", &["serverlist", "sl", "ls"], ServersListHandler))
         .then(CommandNode::literal("reload").execute(ReloadHandler))
         .then(
-            CommandNode::literal("register").then(
-                CommandNode::argument("code", &ArgumentType::String(StringType::Greedy))
-                    .execute(RegisterHandler),
-            ),
+            CommandNode::literal("register")
+                .then(
+                    CommandNode::literal("--code").then(
+                        CommandNode::argument("code", &ArgumentType::String(StringType::Greedy))
+                            .execute(RegisterHandler),
+                    ),
+                )
+                .then(
+                    CommandNode::argument("code", &ArgumentType::String(StringType::Greedy))
+                        .execute(RegisterHandler),
+                ),
         )
         .then(literal_aliases("network", &["netw"], NetworkLinkHandler))
         .then(literal_aliases("players", &["pl", "playerlist", "list"], PlayersLinkHandler))

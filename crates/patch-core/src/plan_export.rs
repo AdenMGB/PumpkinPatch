@@ -85,8 +85,10 @@ pub async fn export_plan_static_bundle(
 fn write_plan_export_static_assets(export_dir: &Path) -> Result<()> {
     const DASHBOARD: &str = include_str!("../../patch-plan-http/static/plan-dashboard.html");
     const REGISTER: &str = include_str!("../../patch-plan-http/static/register.html");
+    const THEME: &str = include_str!("../../patch-plan-http/static/theme-editor.html");
     std::fs::write(export_dir.join("app.html"), DASHBOARD)?;
     std::fs::write(export_dir.join("register.html"), REGISTER)?;
+    std::fs::write(export_dir.join("theme-editor.html"), THEME)?;
     Ok(())
 }
 

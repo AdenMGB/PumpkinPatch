@@ -778,6 +778,26 @@ pub fn placeholder_context_for(
             .filter(|s| s.start_unix >= cutoff)
             .count() as u64
     };
+    let avg_session_len_since = |cutoff: i64| -> u64 {
+        let sessions: Vec<u64> = rt
+            .players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.end_unix >= cutoff)
+            .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
+            .collect();
+        if sessions.is_empty() {
+            0
+        } else {
+            sessions.iter().sum::<u64>() / sessions.len() as u64
+        }
+    };
+    let unique_players_since = |cutoff: i64| -> u64 {
+        rt.players
+            .values()
+            .filter(|p| p.last_seen_unix >= cutoff)
+            .count() as u64
+    };
     let playtime_in_window = |cutoff: i64| -> u64 {
         rt.players
             .values()
@@ -967,6 +987,10 @@ pub fn placeholder_context_for(
         peak_online_date_recent: peak_date_recent,
         favorite_server: rt.config.server_name.clone(),
         tps_spikes_day,
+        sessions_avg_length_day: avg_session_len_since(now - 86_400),
+        sessions_avg_length_week: avg_session_len_since(now - 7 * 86_400),
+        sessions_avg_length_month: avg_session_len_since(now - 30 * 86_400),
+        sessions_avg_unique_players_day: unique_players_since(now - 86_400),
         top_playtime: top,
     }
 }
