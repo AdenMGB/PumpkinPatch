@@ -197,11 +197,26 @@ pub async fn plan_filters_catalog(
         PlanFilterTypeInfo {
             id: "banned".into(),
             label: "Ban status".into(),
-            implemented: false,
+            implemented: true,
         },
         PlanFilterTypeInfo {
             id: "operators".into(),
             label: "Operator status".into(),
+            implemented: true,
+        },
+        PlanFilterTypeInfo {
+            id: "activityIndexOn".into(),
+            label: "Activity index on historical date".into(),
+            implemented: false,
+        },
+        PlanFilterTypeInfo {
+            id: "pluginsBooleanGroups".into(),
+            label: "DataExtension boolean / group filters".into(),
+            implemented: false,
+        },
+        PlanFilterTypeInfo {
+            id: "pluginNumbers".into(),
+            label: "DataExtension numeric range filters".into(),
             implemented: false,
         },
     ];

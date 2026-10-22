@@ -206,7 +206,7 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_player_ping_average" => ctx.player_ping_avg.map(|p| format!("{:.0}", p)),
         "plan_player_ping_min" => ctx.player_ping_min.map(|p| p.to_string()),
         "plan_player_ping_max" => ctx.player_ping_max.map(|p| p.to_string()),
-        "plan_player_sessions_count" => Some(ctx.sessions_count_day.to_string()),
+        "plan_player_sessions_count" => Some(ctx.session_triples.len().to_string()),
         "plan_player_session_length_average" => {
             let n = ctx.session_triples.len().max(1) as u64;
             let total = ctx.playtime_secs;
@@ -444,6 +444,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_player_is_banned%", &ctx).as_deref(),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn resolves_player_sessions_count_from_triples() {
+        let ctx = PlanPlaceholderContext {
+            session_triples: vec![(0, 1000, 0), (2000, 3000, 0)],
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_player_sessions_count%", &ctx).as_deref(),
+            Some("2")
         );
     }
 

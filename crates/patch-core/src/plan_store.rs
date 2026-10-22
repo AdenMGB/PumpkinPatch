@@ -1452,6 +1452,55 @@ pub async fn graph_players_online(
     Ok(PlanGraphPlayersOnline { series })
 }
 
+/// Network CCU graph for proxy dashboards (`type=playersOnlineProxies`).
+/// Uses proxy server TPS samples when `plan_servers.is_proxy = 1`, otherwise
+/// `MAX(players_online)` per minute across backends (avoids double-counting SUM).
+pub async fn graph_players_online_proxies(
+    pool: &SqlitePool,
+    network_id: &str,
+) -> Result<PlanGraphPlayersOnline> {
+    let proxy_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM plan_servers WHERE network_id = ? AND is_proxy = 1",
+    )
+    .bind(network_id)
+    .fetch_one(pool)
+    .await?;
+
+    let rows = if proxy_count > 0 {
+        sqlx::query(
+            "SELECT t.date, MAX(t.players_online) AS players_online FROM plan_tps t
+             JOIN plan_servers s ON s.id = t.server_id
+             WHERE s.network_id = ? AND s.is_proxy = 1
+             GROUP BY t.date
+             ORDER BY t.date ASC",
+        )
+        .bind(network_id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT t.date, MAX(t.players_online) AS players_online FROM plan_tps t
+             JOIN plan_servers s ON s.id = t.server_id
+             WHERE s.network_id = ?
+             GROUP BY t.date
+             ORDER BY t.date ASC",
+        )
+        .bind(network_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let series = rows
+        .iter()
+        .map(|row| {
+            let date: i64 = row.get("date");
+            let online: i64 = row.get("players_online");
+            [date, online]
+        })
+        .collect();
+    Ok(PlanGraphPlayersOnline { series })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanPlayerOnlineName {
     pub name: String,
@@ -2541,6 +2590,68 @@ mod ingest_tests {
             player_stats.get("minecraft:custom:walk_one_cm"),
             Some(&1000)
         );
+    }
+
+    #[tokio::test]
+    async fn players_online_proxies_uses_max_across_servers() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory db");
+        ensure_plan_schema(&pool).await.expect("schema");
+        ingest_payload(&pool, "net-1", &sample_payload())
+            .await
+            .expect("ingest");
+        sqlx::query(
+            "INSERT INTO plan_servers (uuid, network_id, name) VALUES ('srv-b', 'net-1', 'Backend B')",
+        )
+        .execute(&pool)
+        .await
+        .expect("second server");
+        let srv_a: i64 = sqlx::query_scalar("SELECT id FROM plan_servers WHERE uuid = 'srv-uuid-1'")
+            .fetch_one(&pool)
+            .await
+            .expect("srv a");
+        let srv_b: i64 = sqlx::query_scalar("SELECT id FROM plan_servers WHERE uuid = 'srv-b'")
+            .fetch_one(&pool)
+            .await
+            .expect("srv b");
+        let date_ms = ((1_700_000_000_i64 / 60) * 60) * 1000;
+        sqlx::query("DELETE FROM plan_tps")
+            .execute(&pool)
+            .await
+            .expect("clear tps");
+        sqlx::query(
+            "INSERT INTO plan_tps (server_id, date, ticks_per_second, players_online)
+             VALUES (?, ?, 20.0, 3), (?, ?, 20.0, 7)",
+        )
+        .bind(srv_a)
+        .bind(date_ms)
+        .bind(srv_b)
+        .bind(date_ms)
+        .execute(&pool)
+        .await
+        .expect("tps rows");
+        let summed = graph_players_online(&pool, "net-1", None)
+            .await
+            .expect("sum graph");
+        let proxies = graph_players_online_proxies(&pool, "net-1")
+            .await
+            .expect("proxy graph");
+        let sum_val = summed
+            .series
+            .iter()
+            .find(|p| p[0] == date_ms)
+            .map(|p| p[1])
+            .unwrap_or(0);
+        let max_val = proxies
+            .series
+            .iter()
+            .find(|p| p[0] == date_ms)
+            .map(|p| p[1])
+            .unwrap_or(0);
+        assert_eq!(sum_val, 10);
+        assert_eq!(max_val, 7);
     }
 
     #[test]

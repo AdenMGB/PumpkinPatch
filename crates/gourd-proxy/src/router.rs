@@ -22,6 +22,25 @@ impl BackendPoolState {
     }
 }
 
+/// How many hidden-ready backends to promote when CCU exceeds active pool capacity (plangem.md §3.3).
+pub fn predictive_scale_recommendation(
+    current_ccu: u32,
+    active_backends: u32,
+    players_per_backend: u32,
+    hidden_ready: u32,
+) -> u32 {
+    if active_backends == 0 || players_per_backend == 0 {
+        return 0;
+    }
+    let capacity = active_backends.saturating_mul(players_per_backend);
+    if current_ccu <= capacity {
+        return 0;
+    }
+    let deficit = current_ccu - capacity;
+    let need = (deficit + players_per_backend - 1) / players_per_backend;
+    need.min(hidden_ready)
+}
+
 pub fn parse_pool_state(raw: Option<&str>) -> BackendPoolState {
     let s = raw.map(str::trim).unwrap_or("").to_ascii_lowercase();
     match s.as_str() {
@@ -186,5 +205,12 @@ mod tests {
     fn parse_pool_state_aliases() {
         assert_eq!(parse_pool_state(Some("hidden_ready")), BackendPoolState::StandbyHiddenReady);
         assert_eq!(parse_pool_state(Some("DRAINING")), BackendPoolState::Draining);
+    }
+
+    #[test]
+    fn predictive_scale_caps_at_hidden_ready() {
+        assert_eq!(predictive_scale_recommendation(95, 2, 40, 1), 1);
+        assert_eq!(predictive_scale_recommendation(50, 2, 40, 3), 0);
+        assert_eq!(predictive_scale_recommendation(200, 1, 40, 2), 2);
     }
 }

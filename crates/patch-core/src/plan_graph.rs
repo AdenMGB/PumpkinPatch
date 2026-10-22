@@ -23,6 +23,10 @@ pub async fn plan_graph(
             let g = crate::plan_store::graph_players_online(pool, network_id, server_uuid).await?;
             Ok(json!({ "players_online": g.series }))
         }
+        "playersOnlineProxies" => {
+            let g = crate::plan_store::graph_players_online_proxies(pool, network_id).await?;
+            Ok(json!({ "players_online": g.series }))
+        }
         "worldPie" => Ok(json!(world_pie(pool, network_id, server_uuid).await?)),
         "punchCard" => Ok(json!({ "punchcard": punch_card(pool, network_id, server_uuid).await? })),
         "joinAddressesPie" => {
