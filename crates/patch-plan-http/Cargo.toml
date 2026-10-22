@@ -8,6 +8,7 @@ description = "Plan-compatible Axum /v1 REST server (indepth.md §5.3)"
 axum = { version = "0.8", features = ["json"] }
 patch-analytics-protocol = { path = "../../plugins/patch-analytics-protocol" }
 patch-core = { path = "../patch-core" }
+patch-plan-core = { path = "../patch-plan-core" }
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

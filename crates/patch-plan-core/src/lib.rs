@@ -1,12 +1,14 @@
 //! Plan-compatible analytics core for Pumpkin Patch (native Path A).
 
 mod activity_index;
+mod apiv5;
 mod data_extension;
 mod geolocation;
 mod join_address;
 mod placeholders;
 mod session;
 
+pub use apiv5::plan_capabilities_v1;
 pub use activity_index::{
     active_playtime_in_weeks, classify_activity_index, ActivityGroup, ActivityIndex,
     DEFAULT_PLAYTIME_THRESHOLD_MS, ONE_WEEK_MS,

@@ -117,6 +117,14 @@
           <option value="tps">tps</option>
           <option value="uniqueAndNew">uniqueAndNew</option>
           <option value="geolocation">geolocation</option>
+          <option value="ping">ping</option>
+          <option value="cpuRam">cpuRam</option>
+          <option value="worldLoad">worldLoad</option>
+          <option value="disk">disk</option>
+          <option value="activity">activity</option>
+          <option value="punchCard">punchCard</option>
+          <option value="hourlyUniqueAndNew">hourlyUniqueAndNew</option>
+          <option value="serverCalendar">serverCalendar</option>
         </select>
       </label>
       <canvas id="chart" width="800" height="240"></canvas>
@@ -126,7 +134,7 @@
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
-    let activePanel = 'server';
+    let activePanel = new URLSearchParams(location.search).get('panel') || 'server';
 
     document.querySelectorAll('nav button').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -135,6 +143,12 @@
         document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + activePanel));
         refresh();
       });
+    });
+    document.querySelectorAll('nav button').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.panel === activePanel);
+    });
+    document.querySelectorAll('.panel').forEach((p) => {
+      p.classList.toggle('active', p.id === 'panel-' + activePanel);
     });
 
     async function loadServers() {
@@ -230,9 +244,11 @@
       const q = new URLSearchParams({ type });
       if (server) q.set('server', server);
       const d = await fetch('/v1/graph?' + q).then((r) => r.json());
-      const series = d.players_online || d.tps || d.unique_and_new || [];
+      const series = d.players_online || d.tps || d.unique_and_new || d.avg_ping || d.cpu || d.entities || d.free_disk || [];
       if (Array.isArray(series) && series.length && Array.isArray(series[0])) {
         drawSeries(series);
+      } else if (d.punchcard && Array.isArray(d.punchcard)) {
+        drawSeries(d.punchcard.map((p) => [p.x || 0, p.z || p.y || 0]));
       } else {
         drawSeries([]);
       }

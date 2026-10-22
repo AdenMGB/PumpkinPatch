@@ -5,7 +5,7 @@ use crate::network::{NetworkOrchestrator, VELOCITY_BACKEND_HOST};
 use crate::port_wait::wait_for_tcp_port;
 use crate::rcon::send_rcon_command;
 use crate::models::{NetworkRecord, NetworkRuntimeStatus, ServerRecord};
-use gourd_proxy::{GourdConfig, GourdProxy, GourdRouter};
+use gourd_proxy::{parse_pool_state, GourdConfig, GourdProxy, GourdRouter};
 use vineyard_protocol::RouteWireSpec;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -92,7 +92,11 @@ impl ProcessSupervisor {
             .parse()
             .map_err(|e| Error::Other(format!("invalid backend address: {e}")))?;
         router
-            .register_route(&spec.server_alias, addr)
+            .register_route_with_state(
+                &spec.server_alias,
+                addr,
+                parse_pool_state(spec.pool_state.as_deref()),
+            )
             .await;
         for host in &spec.forced_hosts {
             router.register_forced_host(host, &spec.server_alias).await;

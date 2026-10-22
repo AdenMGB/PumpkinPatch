@@ -103,6 +103,9 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
     if let Some(v) = resolve_timed_duration(inner, ctx) {
         return Some(v);
     }
+    if let Some(v) = resolve_server_session_duration(inner, ctx) {
+        return Some(v);
+    }
     if let Some(v) = resolve_recent_kill(inner, ctx) {
         return Some(v);
     }
@@ -248,6 +251,31 @@ fn resolve_recent_kill(inner: &str, ctx: &PlanPlaceholderContext) -> Option<Stri
         .map(|(_, weapon)| weapon.clone())
 }
 
+fn resolve_server_session_duration(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
+    let raw = inner.ends_with("_raw");
+    let base = inner.strip_suffix("_raw").unwrap_or(inner);
+    let (secs, ms) = match base {
+        "plan_sessions_playtime_total" => (ctx.sessions_playtime_secs, ctx.sessions_playtime_secs * 1000),
+        "plan_sessions_playtime_day" => (ctx.sessions_playtime_day, ctx.sessions_playtime_day * 1000),
+        "plan_sessions_playtime_week" => (ctx.sessions_playtime_week, ctx.sessions_playtime_week * 1000),
+        "plan_sessions_playtime_month" => (ctx.sessions_playtime_month, ctx.sessions_playtime_month * 1000),
+        "plan_sessions_active_time_total" => (ctx.sessions_active_secs, ctx.sessions_active_secs * 1000),
+        "plan_sessions_active_time_day" => (ctx.sessions_active_day, ctx.sessions_active_day * 1000),
+        "plan_sessions_active_time_week" => (ctx.sessions_active_week, ctx.sessions_active_week * 1000),
+        "plan_sessions_active_time_month" => (ctx.sessions_active_month, ctx.sessions_active_month * 1000),
+        "plan_sessions_afk_time_total" => (ctx.sessions_afk_secs, ctx.sessions_afk_secs * 1000),
+        "plan_sessions_afk_time_day" => (ctx.sessions_afk_day, ctx.sessions_afk_day * 1000),
+        "plan_sessions_afk_time_week" => (ctx.sessions_afk_week, ctx.sessions_afk_week * 1000),
+        "plan_sessions_afk_time_month" => (ctx.sessions_afk_month, ctx.sessions_afk_month * 1000),
+        _ => return None,
+    };
+    if raw {
+        Some(ms.to_string())
+    } else {
+        Some(format_duration(secs))
+    }
+}
+
 fn resolve_timed_duration(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
     let (window, raw) = match inner {
         s if s.starts_with("plan_player_time_day") => (DAY_MS, s.ends_with("_raw")),
@@ -390,6 +418,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_players_new_day%", &ctx).as_deref(),
             Some("3")
+        );
+    }
+
+    #[test]
+    fn resolves_sessions_playtime_day_raw() {
+        let ctx = PlanPlaceholderContext {
+            sessions_playtime_day: 90,
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_sessions_playtime_day_raw%", &ctx).as_deref(),
+            Some("90000")
         );
     }
 

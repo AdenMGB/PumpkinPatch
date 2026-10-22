@@ -42,6 +42,9 @@ pub struct RouteWireSpec {
     pub forced_hosts: Vec<String>,
     pub priority_tier: i32,
     pub permission_gate: Option<String>,
+    /// Gourd pool lifecycle: `active`, `warming_up`, `hidden_ready`, `in_game_locked`, `draining`.
+    #[serde(default)]
+    pub pool_state: Option<String>,
 }
 
 /// Byte length of every `pack_frame` payload (always serializes `MAX_HOT_CHUNKS` slots).

@@ -101,7 +101,9 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/player", get(player_profile))
         .route("/v1/player/json", get(player_gdpr_json))
         .route("/v1/graph", get(graph))
+        .route("/v1/capabilities", get(capabilities))
         .route("/", get(plan_dashboard_redirect))
+        .route("/query", get(plan_query_redirect))
         .route("/app", get(plan_embedded_app))
         .route("/app/", get(plan_embedded_app))
         .route("/register", get(plan_register_page))
@@ -207,10 +209,21 @@ fn live_online(st: &PlanHttpState, server: Option<&str>) -> u32 {
         .unwrap_or(0)
 }
 
+async fn capabilities() -> impl IntoResponse {
+    Json(patch_plan_core::plan_capabilities_v1())
+}
+
 async fn plan_dashboard_redirect() -> impl IntoResponse {
     (
         StatusCode::TEMPORARY_REDIRECT,
         [(axum::http::header::LOCATION, "/app")],
+    )
+}
+
+async fn plan_query_redirect() -> impl IntoResponse {
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(axum::http::header::LOCATION, "/app?panel=query")],
     )
 }
 

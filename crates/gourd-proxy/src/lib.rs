@@ -3,7 +3,7 @@
 mod forwarding;
 mod router;
 
-pub use router::GourdRouter;
+pub use router::{BackendPoolState, GourdRouter, parse_pool_state};
 
 use std::net::SocketAddr;
 use std::sync::Arc;
