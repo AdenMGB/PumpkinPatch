@@ -21,6 +21,7 @@ patch-plugin-resolve = { path = "../crates/patch-plugin-resolve" }
 crow-swarm = { path = "../crates/crow-swarm" }
 patch-cas = { path = "../crates/patch-cas" }
 patchwork = { path = "../crates/patchwork" }
+patch-audit = { path = "../crates/patch-audit" }
 tendril-voice = { path = "../crates/tendril-voice" }
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tauri = { version = "2", features = [] }

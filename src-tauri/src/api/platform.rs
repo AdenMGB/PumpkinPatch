@@ -2,6 +2,7 @@ use super::Result;
 use crow_swarm::{SwarmPlan, SwarmReport};
 use patch_cas::CasStore;
 use patchwork::{index_pack_assets, merge_manifests, read_pack_manifest, PackManifest};
+use patch_audit::AuditLedger;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -13,6 +14,22 @@ pub struct CasPutResponse {
 #[tauri::command]
 pub async fn crow_swarm_run(plan: SwarmPlan) -> Result<SwarmReport> {
     Ok(crow_swarm::run_swarm(plan).await)
+}
+
+#[tauri::command]
+pub async fn audit_ledger_append(
+    state: tauri::State<'_, crate::state::AppStateHandle>,
+    actor: String,
+    action: String,
+    detail: String,
+) -> Result<String> {
+    let inner = state.get().await?;
+    let path = inner.dirs.data.join("audit-chain.jsonl");
+    let mut ledger = AuditLedger::open(&path).map_err(|e| patch_core::Error::Other(e.to_string()))?;
+    let entry = ledger
+        .append(&actor, &action, &detail)
+        .map_err(|e| patch_core::Error::Other(e.to_string()))?;
+    Ok(entry.entry_hash)
 }
 
 #[tauri::command]

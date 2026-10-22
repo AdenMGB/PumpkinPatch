@@ -16,6 +16,7 @@ members = [
     "crates/patch-cas",
     "crates/crow-swarm",
     "crates/patchwork",
+    "crates/patch-audit",
     "plugins/patch-analytics-protocol",
     "plugins/patch-network-protocol",
     "src-tauri",

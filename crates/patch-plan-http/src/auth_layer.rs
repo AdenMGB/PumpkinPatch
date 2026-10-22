@@ -11,6 +11,8 @@ use patch_core::{
     plan_log_access, plan_validate_cookie, user_has_permission, username_for_session_cookie,
 };
 
+use crate::client_ip::client_ip_from_headers;
+
 use crate::PlanHttpState;
 
 pub async fn authorize_session_permission(
@@ -74,14 +76,22 @@ pub async fn require_plan_session(
         Some(cookie) => plan_validate_cookie(&st.pool, &cookie).await.unwrap_or(false),
         None => false,
     };
+    let client_ip = client_ip_from_headers(req.headers(), st.trust_forwarded);
     if !authorized {
-        let _ = plan_log_access(&st.pool, None, &method, &uri, 401).await;
+        let _ = plan_log_access(
+            &st.pool,
+            client_ip.as_deref(),
+            &method,
+            &uri,
+            401,
+        )
+        .await;
         return (StatusCode::UNAUTHORIZED, "Plan session required").into_response();
     }
     let response = next.run(req).await;
     let _ = plan_log_access(
         &st.pool,
-        None,
+        client_ip.as_deref(),
         &method,
         &uri,
         response.status().as_u16() as i32,
@@ -110,8 +120,16 @@ pub async fn require_admin_session(
     let is_admin = patch_core::user_has_permission(&st.pool, &username, "manage.groups")
         .await
         .unwrap_or(false);
+    let client_ip = client_ip_from_headers(req.headers(), st.trust_forwarded);
     if !is_admin {
-        let _ = plan_log_access(&st.pool, None, &method, &uri, 403).await;
+        let _ = plan_log_access(
+            &st.pool,
+            client_ip.as_deref(),
+            &method,
+            &uri,
+            403,
+        )
+        .await;
         return (StatusCode::FORBIDDEN, "manage.groups required").into_response();
     }
     next.run(req).await

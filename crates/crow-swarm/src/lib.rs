@@ -9,6 +9,9 @@ pub struct SwarmPlan {
     pub target_bots: u32,
     pub ramp_seconds: u32,
     pub join_address: String,
+    /// `login_storm`, `world_explorer`, or `combat_chaos` (plangem.md §6.6).
+    #[serde(default)]
+    pub behavior_profile: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +21,11 @@ pub struct SwarmReport {
 }
 
 pub async fn run_swarm(plan: SwarmPlan) -> SwarmReport {
+    let _profile = if plan.behavior_profile.is_empty() {
+        "login_storm"
+    } else {
+        plan.behavior_profile.as_str()
+    };
     let step = Duration::from_millis(
         (plan.ramp_seconds.max(1) as u64 * 1000) / plan.target_bots.max(1) as u64,
     );

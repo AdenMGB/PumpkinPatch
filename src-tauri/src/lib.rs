@@ -105,6 +105,7 @@ pub fn run() {
             api::plan_db::plan_import_signed_export,
             api::plan_db::plan_db_restore,
             api::platform::crow_swarm_run,
+            api::platform::audit_ledger_append,
             api::platform::patch_cas_put_bytes,
             api::platform::patchwork_merge_pack_dirs,
             api::voice::tendril_voice_start,

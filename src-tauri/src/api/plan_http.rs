@@ -42,6 +42,7 @@ pub async fn plan_http_start(
         static_export_dir: Some(export_dir),
         json_cache: inner.plan_json_cache.clone(),
         export_secret: token.clone(),
+        trust_forwarded: true,
     };
 
     tokio::spawn(async move {

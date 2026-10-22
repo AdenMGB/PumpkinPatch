@@ -1986,6 +1986,8 @@ pub struct PlanPlayerProfileV1 {
     pub sessions: Vec<PlanSessionRow>,
     pub kills_as_killer: Vec<PlanKillRow>,
     pub kills_as_victim: Vec<PlanKillRow>,
+    #[serde(default)]
+    pub extensions: serde_json::Value,
 }
 
 pub async fn player_gdpr_export_json(
@@ -2026,6 +2028,15 @@ pub async fn player_profile_v1(
     let world_pie_series = player_world_pie_from_sessions(&session_rows);
     let server_pie_series = player_server_pie_from_sessions(&session_rows);
     let statistics = player_statistics_map(pool, network_id, player_uuid).await?;
+    let extensions = crate::plan_extension_sql::extension_values_by_uuid(
+        pool,
+        network_id,
+        &[player_uuid.to_string()],
+    )
+    .await?
+    .get(player_uuid)
+    .cloned()
+    .unwrap_or_else(|| serde_json::json!({}));
 
     Ok(PlanPlayerProfileV1 {
         info,
@@ -2039,6 +2050,7 @@ pub async fn player_profile_v1(
         sessions: session_rows,
         kills_as_killer,
         kills_as_victim,
+        extensions,
     })
 }
 

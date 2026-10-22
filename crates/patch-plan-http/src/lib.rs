@@ -1,8 +1,10 @@
 //! Embedded Plan-shaped HTTP API for external dashboards (indepth.md §5.3).
 
 mod auth_layer;
+mod client_ip;
 mod manage_api;
 mod plan_react;
+mod plan_resolver;
 mod react_compat;
 
 use axum::{
@@ -44,6 +46,8 @@ pub struct PlanHttpState {
     pub static_export_dir: Option<PathBuf>,
     pub json_cache: Arc<PlanJsonCache>,
     pub export_secret: String,
+    /// When true, `X-Forwarded-For` / `X-Real-IP` populate `plan_access_log.from_ip` (indepth §5.2).
+    pub trust_forwarded: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +117,7 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/retention", get(retention))
         .route("/v1/extensionData", get(extension_data))
         .route("/v1/extensions/sync", post(extensions_sync))
+        .route("/v1/resolver/{plugin}", get(plan_resolver::resolver_plugin_get))
         .route("/v1/network/overview", get(network_overview))
         .route("/v1/network/servers", get(network_servers))
         .route("/v1/network/playerbaseOverview", get(network_playerbase_overview))
@@ -1058,6 +1063,7 @@ mod tests {
             static_export_dir: None,
             json_cache: PlanJsonCache::new(),
             export_secret: "test-secret".into(),
+            trust_forwarded: true,
         }
     }
 
@@ -1075,6 +1081,20 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let html = String::from_utf8_lossy(&body);
         assert!(html.contains("<!DOCTYPE html") || html.contains("<html"));
+    }
+
+    #[tokio::test]
+    async fn resolver_harvest_metrics_route() {
+        let app = router(test_state().await);
+        let response = app
+            .oneshot(
+                Request::get("/v1/resolver/HarvestMetrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS plan_extension_groups (
     FOREIGN KEY (provider_id) REFERENCES plan_extension_providers(id) ON DELETE CASCADE,
     UNIQUE (user_id, provider_id, group_name)
 );
+
+CREATE TABLE IF NOT EXISTS plan_extension_tabs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plugin_id INTEGER NOT NULL,
+    tab_name TEXT NOT NULL,
+    element_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (plugin_id) REFERENCES plan_extension_plugins(id) ON DELETE CASCADE,
+    UNIQUE (plugin_id, tab_name)
+);
 ";
 
 pub async fn ensure_extension_sql_schema(pool: &SqlitePool) -> Result<()> {
@@ -81,6 +90,18 @@ fn value_type_label(value: &Value) -> &'static str {
     } else {
         "string"
     }
+}
+
+async fn upsert_extension_tab(pool: &SqlitePool, plugin_id: i64, tab_name: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO plan_extension_tabs (plugin_id, tab_name, element_order) VALUES (?, ?, 0)
+         ON CONFLICT(plugin_id, tab_name) DO NOTHING",
+    )
+    .bind(plugin_id)
+    .bind(tab_name)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 async fn upsert_plugin(
@@ -261,6 +282,7 @@ pub async fn sync_registered_extensions_to_sql(
     let mut rows = 0u32;
     for (plugin_name, icon, server_vals, player_vals) in plugin_jobs {
         let plugin_id = upsert_plugin(pool, network_id, &plugin_name, &icon).await?;
+        upsert_extension_tab(pool, plugin_id, "Overview").await?;
         rows += 1;
         for (key, value, show) in server_vals {
             let provider_id =
