@@ -49,6 +49,7 @@ pub struct RuntimeState {
     pub online_ping: HashMap<String, OnlinePingTrack>,
     pub server_enabled_at: i64,
     pub registration_completions: Vec<patch_analytics_protocol::RegistrationCompletion>,
+    pub web_admin_actions: Vec<patch_analytics_protocol::WebAdminAction>,
     pub vineyard_sink: Option<pumpkin_hook_sdk::TelemetrySink>,
 }
 
@@ -563,6 +564,7 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
         recent_pvp_kills: rt.recent_pvp_kills.clone(),
         performance_samples: rt.performance_samples.clone(),
         registration_completions: rt.registration_completions.clone(),
+        web_admin_actions: rt.web_admin_actions.clone(),
     };
     let signature =
         patch_analytics_protocol::sign_payload(&payload, &rt.config.export_secret)?;
@@ -599,6 +601,18 @@ pub fn queue_registration_completion(
 
 pub fn drain_registration_completions(rt: &mut RuntimeState) {
     rt.registration_completions.clear();
+}
+
+pub fn queue_web_admin_action(rt: &mut RuntimeState, action: patch_analytics_protocol::WebAdminAction) {
+    rt.web_admin_actions.push(action);
+    if rt.web_admin_actions.len() > 32 {
+        let drain = rt.web_admin_actions.len() - 32;
+        rt.web_admin_actions.drain(0..drain);
+    }
+}
+
+pub fn drain_web_admin_actions(rt: &mut RuntimeState) {
+    rt.web_admin_actions.clear();
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]

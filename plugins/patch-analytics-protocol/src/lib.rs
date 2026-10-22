@@ -11,7 +11,7 @@ pub const PLUGIN_DATA_DIR_NAME: &str = "PatchPlan";
 pub const CONFIG_FILENAME: &str = "patch-config.json";
 pub const EXPORT_FILENAME: &str = "export.json";
 pub const STATE_FILENAME: &str = "state.json";
-pub const EXPORT_SCHEMA_VERSION: u32 = 5;
+pub const EXPORT_SCHEMA_VERSION: u32 = 6;
 pub const MAX_PERFORMANCE_SAMPLES: usize = 576;
 pub const MAX_RECENT_PVP_KILLS: usize = 150;
 pub const MAX_COMPLETED_SESSIONS_PER_PLAYER: usize = 96;
@@ -186,6 +186,25 @@ pub struct RegistrationCompletion {
     pub grant_admin: bool,
 }
 
+/// In-game web RBAC admin actions (`/plan setgroup`, `logout`, `unregister`) synced via export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum WebAdminAction {
+    SetGroup {
+        username: String,
+        group_name: String,
+    },
+    LogoutUser {
+        username: String,
+    },
+    DeleteUser {
+        username: String,
+    },
+    DeleteUserByUuid {
+        player_uuid: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyticsPayload {
     pub schema_version: u32,
@@ -214,6 +233,8 @@ pub struct AnalyticsPayload {
     pub performance_samples: Vec<PerformanceSample>,
     #[serde(default)]
     pub registration_completions: Vec<RegistrationCompletion>,
+    #[serde(default)]
+    pub web_admin_actions: Vec<WebAdminAction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -317,6 +338,9 @@ mod tests {
             activity_samples: vec![],
             command_usages: HashMap::new(),
             recent_pvp_kills: vec![],
+            performance_samples: vec![],
+            registration_completions: vec![],
+            web_admin_actions: vec![],
         };
         let sig = sign_payload(&payload, "test-secret").unwrap();
         let export = SignedExport {

@@ -8,11 +8,28 @@ const DEFAULT_PERMISSIONS: &[&str] = &[
     "page.server",
     "page.player.self",
     "page.player.other",
+    "access.player.list",
     "access.query",
+    "access.errors",
+    "access.docs",
     "manage.groups",
     "access.theme.editor",
     "manage.themes",
 ];
+
+const STAFF_PERMISSIONS: &[&str] = &[
+    "page.network",
+    "page.server",
+    "page.player.self",
+    "page.player.other",
+    "access.player.list",
+    "access.query",
+    "access.errors",
+    "access.docs",
+    "access.theme.editor",
+];
+
+const PLAYER_PERMISSIONS: &[&str] = &["page.player.self", "access.player.list"];
 
 pub async fn ensure_plan_web_security(pool: &SqlitePool) -> Result<()> {
     for perm in DEFAULT_PERMISSIONS {
@@ -34,19 +51,17 @@ pub async fn ensure_plan_web_security(pool: &SqlitePool) -> Result<()> {
     let admin_id: i64 = sqlx::query_scalar("SELECT id FROM plan_web_group WHERE group_name = 'admin'")
         .fetch_one(pool)
         .await?;
-    for perm in DEFAULT_PERMISSIONS {
-        let pid: i64 = sqlx::query_scalar("SELECT id FROM plan_web_permission WHERE permission = ?")
-            .bind(perm)
-            .fetch_one(pool)
-            .await?;
-        sqlx::query(
-            "INSERT OR IGNORE INTO plan_web_group_to_permission (group_id, permission_id) VALUES (?, ?)",
-        )
-        .bind(admin_id)
-        .bind(pid)
-        .execute(pool)
+    seed_group_permissions(pool, admin_id, DEFAULT_PERMISSIONS).await?;
+
+    let staff_id: i64 = sqlx::query_scalar("SELECT id FROM plan_web_group WHERE group_name = 'staff'")
+        .fetch_one(pool)
         .await?;
-    }
+    seed_group_permissions(pool, staff_id, STAFF_PERMISSIONS).await?;
+
+    let player_id: i64 = sqlx::query_scalar("SELECT id FROM plan_web_group WHERE group_name = 'player'")
+        .fetch_one(pool)
+        .await?;
+    seed_group_permissions(pool, player_id, PLAYER_PERMISSIONS).await?;
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM plan_security")
         .fetch_one(pool)
@@ -59,6 +74,27 @@ pub async fn ensure_plan_web_security(pool: &SqlitePool) -> Result<()> {
         .bind("admin")
         .bind(hash)
         .bind(admin_id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn seed_group_permissions(
+    pool: &SqlitePool,
+    group_id: i64,
+    permissions: &[&str],
+) -> Result<()> {
+    for perm in permissions {
+        let pid: i64 = sqlx::query_scalar("SELECT id FROM plan_web_permission WHERE permission = ?")
+            .bind(perm)
+            .fetch_one(pool)
+            .await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO plan_web_group_to_permission (group_id, permission_id) VALUES (?, ?)",
+        )
+        .bind(group_id)
+        .bind(pid)
         .execute(pool)
         .await?;
     }
@@ -360,6 +396,45 @@ pub async fn process_registration_completions(
     Ok(ok)
 }
 
+pub async fn process_web_admin_actions(
+    pool: &SqlitePool,
+    actions: &[patch_analytics_protocol::WebAdminAction],
+) -> Result<u32> {
+    let mut ok = 0u32;
+    for action in actions {
+        let applied = match action {
+            patch_analytics_protocol::WebAdminAction::SetGroup { username, group_name } => {
+                set_web_user_group(pool, username, group_name).await.is_ok()
+            }
+            patch_analytics_protocol::WebAdminAction::LogoutUser { username } => {
+                logout_web_user(pool, username).await.is_ok()
+            }
+            patch_analytics_protocol::WebAdminAction::DeleteUser { username } => {
+                let _ = logout_web_user(pool, username).await;
+                delete_web_user(pool, username).await.is_ok()
+            }
+            patch_analytics_protocol::WebAdminAction::DeleteUserByUuid { player_uuid } => {
+                let username: Option<String> = sqlx::query_scalar(
+                    "SELECT username FROM plan_security WHERE linked_to_uuid = ? COLLATE NOCASE LIMIT 1",
+                )
+                .bind(player_uuid)
+                .fetch_optional(pool)
+                .await?;
+                if let Some(username) = username {
+                    let _ = logout_web_user(pool, &username).await;
+                    delete_web_user(pool, &username).await.is_ok()
+                } else {
+                    false
+                }
+            }
+        };
+        if applied {
+            ok += 1;
+        }
+    }
+    Ok(ok)
+}
+
 fn registration_code() -> String {
     use rand::Rng;
     let mut rng = rand::rng();
@@ -382,6 +457,36 @@ mod registration_tests {
         crate::plan_store::ensure_plan_schema(&pool).await.unwrap();
         let users = list_web_users(&pool).await.unwrap();
         assert!(users.iter().any(|u| u.username == "admin"));
+    }
+
+    #[tokio::test]
+    async fn staff_group_has_query_not_manage_groups() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::plan_store::ensure_plan_schema(&pool).await.unwrap();
+        assert!(user_has_permission(&pool, "admin", "manage.groups")
+            .await
+            .unwrap());
+        let staff_gid: i64 =
+            sqlx::query_scalar("SELECT id FROM plan_web_group WHERE group_name = 'staff'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query(
+            "INSERT INTO plan_security (username, salted_pass_hash, linked_to_uuid, group_id) VALUES ('mod1', 'x', '', ?)",
+        )
+        .bind(staff_gid)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(user_has_permission(&pool, "mod1", "access.query")
+            .await
+            .unwrap());
+        assert!(!user_has_permission(&pool, "mod1", "manage.groups")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]

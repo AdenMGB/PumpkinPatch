@@ -1,9 +1,10 @@
 //! In-game `/patchplan` and `/plan` commands (Plan §7 subset).
 
 use crate::state::{
-    drain_registration_completions, persist_state, player_id, queue_registration_completion,
-    unix_now, with_runtime, write_export,
+    drain_registration_completions, drain_web_admin_actions, persist_state, player_id,
+    queue_registration_completion, queue_web_admin_action, unix_now, with_runtime, write_export,
 };
+use patch_analytics_protocol::WebAdminAction;
 use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
 use pumpkin_plugin_api::command::{
     Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs,
@@ -14,7 +15,13 @@ use pumpkin_plugin_api::text::TextComponent;
 use pumpkin_plugin_api::Server;
 
 pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_plugin_api::Result<()> {
-    let names = ["patchplan".to_string(), "plan".to_string()];
+    let names = [
+        "patchplan".to_string(),
+        "plan".to_string(),
+        "planproxy".to_string(),
+        "planbungee".to_string(),
+        "planvelocity".to_string(),
+    ];
     let cmd = Command::new(&names, "Patch Plan player analytics (Pumpkin Patch)")
         .execute(StatsHandler)
         .then(CommandNode::literal("help").execute(HelpHandler))
@@ -48,6 +55,28 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         .then(CommandNode::literal("export").execute(ExportHandler))
         .then(CommandNode::literal("server").execute(ServerLinkHandler))
         .then(CommandNode::literal("users").execute(UsersHandler))
+        .then(
+            CommandNode::literal("setgroup").then(
+                CommandNode::argument("user", &ArgumentType::String(StringType::Word)).then(
+                    CommandNode::argument("group", &ArgumentType::String(StringType::Word))
+                        .execute(SetGroupHandler),
+                ),
+            ),
+        )
+        .then(
+            CommandNode::literal("logout").then(
+                CommandNode::argument("user", &ArgumentType::String(StringType::Word))
+                    .execute(LogoutHandler),
+            ),
+        )
+        .then(
+            CommandNode::literal("unregister")
+                .execute(UnregisterSelfHandler)
+                .then(
+                    CommandNode::argument("user", &ArgumentType::String(StringType::Word))
+                        .execute(UnregisterOtherHandler),
+                ),
+        )
         .then(CommandNode::literal("db").then(CommandNode::literal("status").execute(DbStatusHandler)));
     context.register_command(cmd, "patchplan.command");
     Ok(())
@@ -74,6 +103,9 @@ impl CommandHandler for HelpHandler {
             "§e/plan json§r — GDPR JSON export path hint",
             "§e/plan help§r — this message",
             "§e/plan register§r — link a pending web registration code",
+            "§e/plan setgroup <user> <group>§r — web RBAC (console)",
+            "§e/plan logout <user>§r — invalidate web sessions (console)",
+            "§e/plan unregister§r — delete your linked web account",
             "§e/plan db status§r — SQLite export / flush status",
         ] {
             player.send_system_message(TextComponent::text(line), false);
@@ -433,6 +465,154 @@ impl CommandHandler for ExportHandler {
     }
 }
 
+fn sync_plan_export(rt: &mut crate::state::RuntimeState, online: u32) {
+    write_export(rt, online).ok();
+    drain_registration_completions(rt);
+    drain_web_admin_actions(rt);
+    persist_state(rt).ok();
+}
+
+fn require_console(sender: &CommandSender) -> Result<(), CommandError> {
+    if sender.as_player().is_some() {
+        return Err(CommandError::CommandFailed(
+            TextComponent::text("This subcommand requires the server console"),
+        ));
+    }
+    Ok(())
+}
+
+struct SetGroupHandler;
+
+impl CommandHandler for SetGroupHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let user = match args.get_value("user") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan setgroup <user> <group>"),
+                ));
+            }
+        };
+        let group = match args.get_value("group") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan setgroup <user> <group>"),
+                ));
+            }
+        };
+        let _ = with_runtime(|rt| {
+            queue_web_admin_action(
+                rt,
+                WebAdminAction::SetGroup {
+                    username: user.to_string(),
+                    group_name: group.to_string(),
+                },
+            );
+            sync_plan_export(rt, server.get_player_count());
+        });
+        Ok(1)
+    }
+}
+
+struct LogoutHandler;
+
+impl CommandHandler for LogoutHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let user = match args.get_value("user") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan logout <user>"),
+                ));
+            }
+        };
+        let _ = with_runtime(|rt| {
+            queue_web_admin_action(
+                rt,
+                WebAdminAction::LogoutUser {
+                    username: user.to_string(),
+                },
+            );
+            sync_plan_export(rt, server.get_player_count());
+        });
+        Ok(1)
+    }
+}
+
+struct UnregisterSelfHandler;
+
+impl CommandHandler for UnregisterSelfHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let uuid = player_id(&player);
+        let _ = with_runtime(|rt| {
+            queue_web_admin_action(
+                rt,
+                WebAdminAction::DeleteUserByUuid {
+                    player_uuid: uuid,
+                },
+            );
+            sync_plan_export(rt, server.get_player_count());
+        });
+        player.send_system_message(
+            TextComponent::text(
+                "§ePlan unregister queued§7 — your linked web account will be removed on the next Pumpkin Patch sync.",
+            ),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+struct UnregisterOtherHandler;
+
+impl CommandHandler for UnregisterOtherHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let user = match args.get_value("user") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan unregister <username>"),
+                ));
+            }
+        };
+        let _ = with_runtime(|rt| {
+            queue_web_admin_action(
+                rt,
+                WebAdminAction::DeleteUser {
+                    username: user.to_string(),
+                },
+            );
+            sync_plan_export(rt, server.get_player_count());
+        });
+        Ok(1)
+    }
+}
+
 struct RegisterHandler;
 
 impl CommandHandler for RegisterHandler {
@@ -455,9 +635,7 @@ impl CommandHandler for RegisterHandler {
             let name = player.get_display_name().get_text();
             let _ = with_runtime(|rt| {
                 queue_registration_completion(rt, code, &uuid, &name, false);
-                write_export(rt, 1).ok();
-                drain_registration_completions(rt);
-                persist_state(rt).ok();
+                sync_plan_export(rt, 1);
             });
             player.send_system_message(
                 TextComponent::text(
@@ -468,9 +646,7 @@ impl CommandHandler for RegisterHandler {
         } else {
             let _ = with_runtime(|rt| {
                 queue_registration_completion(rt, code, "", "console", true);
-                write_export(rt, 0).ok();
-                drain_registration_completions(rt);
-                persist_state(rt).ok();
+                sync_plan_export(rt, 0);
             });
         }
         Ok(1)

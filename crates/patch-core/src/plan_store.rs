@@ -2136,6 +2136,7 @@ mod ingest_tests {
                 players_online: 2,
             }],
             registration_completions: vec![],
+            web_admin_actions: vec![],
         }
     }
 
@@ -2219,6 +2220,7 @@ mod ingest_tests {
             recent_pvp_kills: vec![],
             performance_samples: vec![],
             registration_completions: vec![],
+            web_admin_actions: vec![],
         };
         let report = ingest_payload(&pool, "net-geo", &payload)
             .await

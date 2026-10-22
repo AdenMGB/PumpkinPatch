@@ -63,6 +63,8 @@ async fn sync_server_plan_export(
         &signed.payload.registration_completions,
     )
     .await;
+    let _ = crate::plan_auth::process_web_admin_actions(pool, &signed.payload.web_admin_actions)
+        .await;
     let report = ingest_payload(pool, &network.id.to_string(), &signed.payload).await?;
     if let Ok(row) = sqlx::query("SELECT id FROM plan_servers WHERE uuid = ?")
         .bind(server.id.to_string())
