@@ -2,8 +2,16 @@
 
 use crate::error::Result;
 use crate::plan_extension::for_each_extension;
-use serde_json::Value;
-use sqlx::SqlitePool;
+use serde_json::{json, Value};
+use sqlx::{Row, SqlitePool};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PlanExtensionColumn {
+    pub key: String,
+    pub label: String,
+    pub plugin_name: String,
+}
 
 const EXTENSION_SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS plan_extension_plugins (
@@ -269,6 +277,120 @@ pub async fn sync_registered_extensions_to_sql(
     }
 
     Ok(rows)
+}
+
+fn decode_extension_cell(
+    boolean_value: Option<i32>,
+    double_value: Option<f64>,
+    string_value: Option<String>,
+    group_value: Option<String>,
+) -> Value {
+    if let Some(b) = boolean_value {
+        return json!(b != 0);
+    }
+    if let Some(d) = double_value {
+        return json!(d);
+    }
+    if let Some(g) = group_value.filter(|s| !s.is_empty()) {
+        return Value::String(g);
+    }
+    if let Some(s) = string_value {
+        return Value::String(s);
+    }
+    Value::Null
+}
+
+/// Columns for `/v1/playersTable` (`show_in_players_table = 1`).
+pub async fn extension_columns_for_table(
+    pool: &SqlitePool,
+    network_id: &str,
+) -> Result<Vec<PlanExtensionColumn>> {
+    let rows = sqlx::query(
+        "SELECT pl.plugin_name, p.provider_name
+         FROM plan_extension_providers p
+         JOIN plan_extension_plugins pl ON pl.id = p.plugin_id
+         WHERE pl.network_id = ? AND p.show_in_players_table = 1
+         ORDER BY pl.plugin_name, p.provider_name",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            let plugin_name: String = r.get("plugin_name");
+            let provider_name: String = r.get("provider_name");
+            PlanExtensionColumn {
+                key: provider_name.clone(),
+                label: provider_name,
+                plugin_name,
+            }
+        })
+        .collect())
+}
+
+/// Per-player nested extension map: `{ "PluginName": { "provider": value } }`.
+pub async fn extension_values_by_uuid(
+    pool: &SqlitePool,
+    network_id: &str,
+    uuids: &[String],
+) -> Result<HashMap<String, Value>> {
+    if uuids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = uuids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT u.uuid, pl.plugin_name, p.provider_name,
+                uv.boolean_value, uv.double_value, uv.string_value, uv.group_value
+         FROM plan_extension_user_values uv
+         JOIN plan_users u ON u.id = uv.user_id
+         JOIN plan_extension_providers p ON p.id = uv.provider_id
+         JOIN plan_extension_plugins pl ON pl.id = p.plugin_id
+         WHERE pl.network_id = ? AND u.uuid IN ({placeholders})"
+    );
+    let mut query = sqlx::query(&sql).bind(network_id);
+    for uuid in uuids {
+        query = query.bind(uuid);
+    }
+    let rows = query.fetch_all(pool).await?;
+    let mut out: HashMap<String, serde_json::Map<String, Value>> = HashMap::new();
+    for row in rows {
+        let uuid: String = row.get("uuid");
+        let plugin: String = row.get("plugin_name");
+        let provider: String = row.get("provider_name");
+        let value = decode_extension_cell(
+            row.get("boolean_value"),
+            row.get("double_value"),
+            row.get("string_value"),
+            row.get("group_value"),
+        );
+        let plugin_obj = out.entry(uuid).or_default();
+        let nested = plugin_obj
+            .entry(plugin)
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if let Some(map) = nested.as_object_mut() {
+            map.insert(provider, value);
+        }
+    }
+    Ok(out
+        .into_iter()
+        .map(|(uuid, plugins)| (uuid, Value::Object(plugins)))
+        .collect())
+}
+
+/// Re-sync all servers in a network (APIv5 `MANUAL_EXTENSION_REFRESH`).
+pub async fn sync_all_servers_extensions(pool: &SqlitePool, network_id: &str) -> Result<u32> {
+    let servers: Vec<(i64,)> = sqlx::query_as(
+        "SELECT id FROM plan_servers WHERE network_id = ? AND is_installed = 1",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    let mut total = 0u32;
+    for (server_id,) in servers {
+        total += sync_registered_extensions_to_sql(pool, network_id, server_id).await?;
+    }
+    Ok(total)
 }
 
 #[cfg(test)]

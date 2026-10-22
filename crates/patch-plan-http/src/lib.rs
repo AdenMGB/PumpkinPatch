@@ -16,7 +16,7 @@ use axum::{
 use patch_core::{
     execute_plan_query, execute_plan_sql_write, execute_readonly_sql, extension_data_v1,
     ingest_signed_export,
-    plan_data_clear_events_since,
+    plan_data_clear_events_since, sync_all_servers_extensions,
     list_command_usages,
     list_join_addresses, list_kills, players_online_at,
     list_web_users, load_cached_plan_query, logout_web_user, network_overview_v1,
@@ -112,6 +112,7 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/joinAddresses", get(join_addresses))
         .route("/v1/retention", get(retention))
         .route("/v1/extensionData", get(extension_data))
+        .route("/v1/extensions/sync", post(extensions_sync))
         .route("/v1/network/overview", get(network_overview))
         .route("/v1/network/servers", get(network_servers))
         .route("/v1/network/playerbaseOverview", get(network_playerbase_overview))
@@ -588,6 +589,21 @@ async fn retention(
 
 async fn extension_data(State(_st): State<PlanHttpState>) -> impl IntoResponse {
     Json(extension_data_v1())
+}
+
+async fn extensions_sync(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.query").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
+    match sync_all_servers_extensions(&st.pool, &st.network_id).await {
+        Ok(rows) => Json(serde_json::json!({ "rows_synced": rows })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn network_overview(State(st): State<PlanHttpState>) -> impl IntoResponse {

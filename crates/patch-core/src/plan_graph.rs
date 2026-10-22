@@ -54,8 +54,15 @@ pub struct WorldPieSlice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GmPieSlice {
+    pub name: String,
+    pub y: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldPieResponse {
     pub world_series: Vec<WorldPieSlice>,
+    pub gm_series: Vec<GmPieSlice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,6 +192,51 @@ async fn world_pie(
         .await?
     };
 
+    let gm_rows = if let Some(uuid) = server_uuid {
+        sqlx::query(
+            "SELECT SUM(wt.survival_time) AS survival,
+                    SUM(wt.creative_time) AS creative,
+                    SUM(wt.adventure_time) AS adventure,
+                    SUM(wt.spectator_time) AS spectator
+             FROM plan_world_times wt
+             JOIN plan_sessions sess ON sess.id = wt.session_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND s.uuid = ?",
+        )
+        .bind(network_id)
+        .bind(uuid)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT SUM(wt.survival_time) AS survival,
+                    SUM(wt.creative_time) AS creative,
+                    SUM(wt.adventure_time) AS adventure,
+                    SUM(wt.spectator_time) AS spectator
+             FROM plan_world_times wt
+             JOIN plan_sessions sess ON sess.id = wt.session_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ?",
+        )
+        .bind(network_id)
+        .fetch_one(pool)
+        .await?
+    };
+
+    let gm_series = [
+        ("Survival", "survival"),
+        ("Creative", "creative"),
+        ("Adventure", "adventure"),
+        ("Spectator", "spectator"),
+    ]
+    .iter()
+    .map(|(label, col)| GmPieSlice {
+        name: (*label).into(),
+        y: gm_rows.get::<i64, _>(*col).max(0) as u64,
+    })
+    .filter(|s| s.y > 0)
+    .collect();
+
     Ok(WorldPieResponse {
         world_series: rows
             .iter()
@@ -193,6 +245,7 @@ async fn world_pie(
                 y: r.get::<i64, _>("total") as u64,
             })
             .collect(),
+        gm_series,
     })
 }
 

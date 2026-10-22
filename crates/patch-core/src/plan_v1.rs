@@ -18,12 +18,7 @@ pub struct PlanPlayersTableV1 {
     pub extension_columns: Vec<PlanExtensionColumn>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlanExtensionColumn {
-    pub key: String,
-    pub label: String,
-    pub plugin_name: String,
-}
+pub use crate::plan_extension_sql::PlanExtensionColumn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanPlayerV1Entry {
@@ -57,7 +52,9 @@ pub async fn players_v1(
     limit: i64,
 ) -> Result<PlanPlayersV1> {
     let table = players_table_v1(pool, network_id, server_uuid, limit).await?;
-    Ok(PlanPlayersV1 { data: table.data })
+    Ok(PlanPlayersV1 {
+        data: table.data,
+    })
 }
 
 pub async fn players_table_v1(
@@ -67,9 +64,25 @@ pub async fn players_table_v1(
     limit: i64,
 ) -> Result<PlanPlayersTableV1> {
     let rows = list_players_table(pool, network_id, server_uuid, limit).await?;
+    let uuids: Vec<String> = rows.iter().map(|r| r.uuid.clone()).collect();
+    let extension_columns =
+        crate::plan_extension_sql::extension_columns_for_table(pool, network_id).await?;
+    let extension_map =
+        crate::plan_extension_sql::extension_values_by_uuid(pool, network_id, &uuids).await?;
+    let data = rows
+        .into_iter()
+        .map(|row| {
+            let mut entry = player_v1_entry(row);
+            entry.extension_values = extension_map
+                .get(&entry.uuid)
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            entry
+        })
+        .collect();
     Ok(PlanPlayersTableV1 {
-        data: rows.into_iter().map(player_v1_entry).collect(),
-        extension_columns: Vec::new(),
+        data,
+        extension_columns,
     })
 }
 
@@ -110,6 +123,54 @@ pub fn player_v1_entry(row: PlanPlayerTableRow) -> PlanPlayerV1Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn players_table_merges_sql_extension_values() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::plan_store::ensure_plan_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO plan_servers (uuid, network_id, name) VALUES ('srv', 'net', 'S')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let server_id: i64 = sqlx::query_scalar("SELECT id FROM plan_servers LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO plan_users (uuid, registered, name) VALUES ('u1', 1, 'Steve')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let user_id: i64 = sqlx::query_scalar("SELECT id FROM plan_users LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO plan_user_info (user_id, server_id, join_address, registered, opped, banned)
+             VALUES (?, ?, '', 1, 0, 0)",
+        )
+        .bind(user_id)
+        .bind(server_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        crate::plan_extension_sql::sync_registered_extensions_to_sql(&pool, "net", server_id)
+            .await
+            .unwrap();
+        let table = players_table_v1(&pool, "net", Some("srv"), 50)
+            .await
+            .unwrap();
+        assert!(!table.extension_columns.is_empty());
+        assert_eq!(table.data.len(), 1);
+        assert!(table.data[0].extension_values.get("HarvestMetrics").is_some());
+    }
 
     #[test]
     fn maps_active_playtime_field() {
