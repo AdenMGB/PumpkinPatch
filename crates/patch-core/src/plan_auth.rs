@@ -121,6 +121,98 @@ pub async fn login(
     Ok(Some(cookie))
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PlanWebUser {
+    pub username: String,
+    pub group_name: String,
+    pub linked_to_uuid: String,
+}
+
+pub async fn list_web_users(pool: &SqlitePool) -> Result<Vec<PlanWebUser>> {
+    let rows = sqlx::query(
+        "SELECT s.username, g.group_name, s.linked_to_uuid
+         FROM plan_security s
+         JOIN plan_web_group g ON g.id = s.group_id
+         ORDER BY s.username COLLATE NOCASE",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| PlanWebUser {
+            username: row.get("username"),
+            group_name: row.get("group_name"),
+            linked_to_uuid: row.get("linked_to_uuid"),
+        })
+        .collect())
+}
+
+pub async fn logout_web_user(pool: &SqlitePool, username: &str) -> Result<u64> {
+    let result = sqlx::query("DELETE FROM plan_cookies WHERE web_username = ? COLLATE NOCASE")
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn set_web_user_group(pool: &SqlitePool, username: &str, group_name: &str) -> Result<()> {
+    let group_id: i64 = sqlx::query_scalar("SELECT id FROM plan_web_group WHERE group_name = ?")
+        .bind(group_name)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| Error::InvalidState(format!("unknown web group '{group_name}'")))?;
+    let updated = sqlx::query(
+        "UPDATE plan_security SET group_id = ? WHERE username = ? COLLATE NOCASE",
+    )
+    .bind(group_id)
+    .bind(username)
+    .execute(pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("web user '{username}'")));
+    }
+    Ok(())
+}
+
+pub async fn delete_web_user(pool: &SqlitePool, username: &str) -> Result<()> {
+    let result = sqlx::query("DELETE FROM plan_security WHERE username = ? COLLATE NOCASE")
+        .bind(username)
+        .execute(pool)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("web user '{username}'")));
+    }
+    Ok(())
+}
+
+pub async fn user_has_permission(pool: &SqlitePool, username: &str, permission: &str) -> Result<bool> {
+    let row: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM plan_security s
+         JOIN plan_web_group g ON g.id = s.group_id
+         JOIN plan_web_group_to_permission gp ON gp.group_id = g.id
+         JOIN plan_web_permission p ON p.id = gp.permission_id
+         WHERE s.username = ? COLLATE NOCASE AND p.permission = ?
+         LIMIT 1",
+    )
+    .bind(username)
+    .bind(permission)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.is_some())
+}
+
+pub async fn username_for_session_cookie(pool: &SqlitePool, cookie: &str) -> Result<Option<String>> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let row = sqlx::query(
+        "SELECT web_username FROM plan_cookies WHERE cookie = ? AND expires > ?",
+    )
+    .bind(cookie)
+    .bind(now)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| r.get("web_username")))
+}
+
 pub async fn validate_cookie(pool: &SqlitePool, cookie: &str) -> Result<bool> {
     let now = chrono::Utc::now().timestamp_millis();
     let row = sqlx::query(
@@ -280,6 +372,17 @@ fn registration_code() -> String {
 mod registration_tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn list_users_includes_seed_admin() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::plan_store::ensure_plan_schema(&pool).await.unwrap();
+        let users = list_web_users(&pool).await.unwrap();
+        assert!(users.iter().any(|u| u.username == "admin"));
+    }
 
     #[tokio::test]
     async fn registration_round_trip() {

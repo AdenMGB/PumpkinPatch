@@ -442,7 +442,6 @@ impl CommandHandler for RegisterHandler {
         _server: Server,
         args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
-        let player = require_player(&sender)?;
         let code = match args.get_value("code") {
             Arg::Simple(s) => s,
             _ => {
@@ -451,20 +450,29 @@ impl CommandHandler for RegisterHandler {
                 ));
             }
         };
-        let uuid = player_id(&player);
-        let name = player.get_display_name().get_text();
-        let _ = with_runtime(|rt| {
-            queue_registration_completion(rt, code, &uuid, &name, false);
-            write_export(rt, 1).ok();
-            drain_registration_completions(rt);
-            persist_state(rt).ok();
-        });
-        player.send_system_message(
-            TextComponent::text(
-                "§aPlan registration queued§7 — Pumpkin Patch will link your web account on the next analytics sync.",
-            ),
-            false,
-        );
+        if let Some(player) = sender.as_player() {
+            let uuid = player_id(&player);
+            let name = player.get_display_name().get_text();
+            let _ = with_runtime(|rt| {
+                queue_registration_completion(rt, code, &uuid, &name, false);
+                write_export(rt, 1).ok();
+                drain_registration_completions(rt);
+                persist_state(rt).ok();
+            });
+            player.send_system_message(
+                TextComponent::text(
+                    "§aPlan registration queued§7 — Pumpkin Patch will link your web account on the next analytics sync.",
+                ),
+                false,
+            );
+        } else {
+            let _ = with_runtime(|rt| {
+                queue_registration_completion(rt, code, "", "console", true);
+                write_export(rt, 0).ok();
+                drain_registration_completions(rt);
+                persist_state(rt).ok();
+            });
+        }
         Ok(1)
     }
 }

@@ -66,8 +66,10 @@ pub use plan_extension::{
     PlanExtensionPlugin, PlanExtensionTab,
 };
 pub use plan_auth::{
-    complete_web_registration, log_access as plan_log_access, login as plan_web_login,
-    process_registration_completions, start_web_registration, validate_cookie as plan_validate_cookie,
+    complete_web_registration, delete_web_user, list_web_users, log_access as plan_log_access,
+    login as plan_web_login, logout_web_user, process_registration_completions,
+    set_web_user_group, start_web_registration, user_has_permission,
+    username_for_session_cookie, validate_cookie as plan_validate_cookie, PlanWebUser,
     RegistrationStart,
 };
 pub use plan_export::{default_export_dir, export_plan_static_bundle};

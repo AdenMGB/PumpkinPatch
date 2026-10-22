@@ -257,6 +257,12 @@ export function usePatchApi() {
         username,
         password,
       }),
+    planWebUsersList: () => invoke<import('~/types/patch').PlanWebUser[]>('plan_web_users_list'),
+    planWebUserSetGroup: (username: string, groupName: string) =>
+      invoke<void>('plan_web_user_set_group', { username, groupName }),
+    planWebUserLogout: (username: string) =>
+      invoke<number>('plan_web_user_logout', { username }),
+    planWebUserDelete: (username: string) => invoke<void>('plan_web_user_delete', { username }),
     analyticsPlanExportStatic: (networkId: string, serverId: string) =>
       invoke<string>('analytics_plan_export_static', { networkId, serverId }),
     analyticsHarvestSync: (networkId: string) =>

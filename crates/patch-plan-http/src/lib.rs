@@ -1,14 +1,18 @@
 //! Embedded Plan-shaped HTTP API for external dashboards (indepth.md §5.3).
 
+mod auth_layer;
+
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{header::SET_COOKIE, HeaderValue, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use patch_core::{
-    execute_plan_query, extension_data_v1, list_join_addresses, list_kills, network_overview_v1,
+    execute_plan_query, extension_data_v1, list_join_addresses, list_kills, list_web_users,
+    logout_web_user, network_overview_v1,
     plan_log_access, plan_web_login, start_web_registration,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
@@ -40,6 +44,25 @@ struct ServerQuery {
 
 pub fn router(state: PlanHttpState) -> Router {
     let export_dir = state.static_export_dir.clone();
+    let session_protected = Router::new()
+        .route("/v1/query", post(query))
+        .route("/v1/errors", get(errors_diagnostics))
+        .route("/v1/filters", get(filters))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_layer::require_plan_session,
+        ))
+        .with_state(state.clone());
+
+    let admin_protected = Router::new()
+        .route("/v1/auth/users", get(auth_users))
+        .route("/v1/auth/logout", post(auth_logout))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_layer::require_admin_session,
+        ))
+        .with_state(state.clone());
+
     let mut router = Router::new()
         .route("/v1/serverOverview", get(server_overview))
         .route("/v1/onlineOverview", get(online_overview))
@@ -59,13 +82,12 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/network/servers", get(network_servers))
         .route("/v1/player", get(player_profile))
         .route("/v1/graph", get(graph))
-        .route("/v1/filters", get(filters))
-        .route("/v1/query", post(query))
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
-        .route("/v1/errors", get(errors_diagnostics))
         .route("/v1/docs", get(openapi_docs))
+        .merge(session_protected)
+        .merge(admin_protected)
         .with_state(state);
     if let Some(dir) = export_dir {
         if dir.exists() {
@@ -105,6 +127,28 @@ async fn auth_register(
     }
 }
 
+#[derive(Deserialize)]
+struct LogoutBody {
+    username: String,
+}
+
+async fn auth_users(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    match list_web_users(&st.pool).await {
+        Ok(users) => Json(serde_json::json!({ "users": users })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn auth_logout(
+    State(st): State<PlanHttpState>,
+    Json(body): Json<LogoutBody>,
+) -> impl IntoResponse {
+    match logout_web_user(&st.pool, &body.username).await {
+        Ok(count) => Json(serde_json::json!({ "sessions_cleared": count })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
+}
+
 async fn auth_login(
     State(st): State<PlanHttpState>,
     Json(body): Json<LoginBody>,
@@ -112,7 +156,14 @@ async fn auth_login(
     match plan_web_login(&st.pool, &body.username, &body.password).await {
         Ok(Some(cookie)) => {
             let _ = plan_log_access(&st.pool, None, "POST", "/v1/auth/login", 200).await;
-            Json(serde_json::json!({ "cookie": cookie })).into_response()
+            let mut response = Json(serde_json::json!({ "cookie": cookie })).into_response();
+            if let Ok(value) = HeaderValue::from_str(&format!(
+                "plan_session={}; Path=/; HttpOnly; SameSite=Lax",
+                cookie
+            )) {
+                response.headers_mut().append(SET_COOKIE, value);
+            }
+            response
         }
         Ok(None) => (StatusCode::UNAUTHORIZED, "invalid credentials").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),

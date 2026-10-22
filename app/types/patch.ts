@@ -55,6 +55,12 @@ export interface PlanRegisterStartResponse {
   expires_ms: number
 }
 
+export interface PlanWebUser {
+  username: string
+  group_name: string
+  linked_to_uuid: string
+}
+
 export interface TopologyNode {
   id: string
   kind: string

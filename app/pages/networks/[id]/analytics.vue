@@ -34,6 +34,11 @@ const regExpires = ref<number | null>(null)
 const regError = ref<string | null>(null)
 const regLoading = ref(false)
 
+const { data: planWebUsers, refetch: refetchWebUsers } = useQuery({
+  queryKey: ['plan-web-users'],
+  queryFn: () => api.planWebUsersList(),
+})
+
 async function submitPlanRegistration() {
   regError.value = null
   regCode.value = null
@@ -42,6 +47,7 @@ async function submitPlanRegistration() {
     const res = await api.planAuthRegisterStart(id.value, regUsername.value.trim(), regPassword.value)
     regCode.value = res.code
     regExpires.value = res.expires_ms
+    refetchWebUsers()
   } catch (e: unknown) {
     regError.value = e instanceof Error ? e.message : 'Registration failed'
   } finally {
@@ -606,6 +612,49 @@ const kpi = computed(() => {
         </PpButton>
       </div>
       <p v-if="regError" class="install-banner install-banner--error">{{ regError }}</p>
+      <div v-if="planWebUsers?.length" class="plan-web-users">
+        <h4 class="section-title">Registered web users</h4>
+        <table class="plan-users-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Group</th>
+              <th>Linked UUID</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in planWebUsers" :key="u.username">
+              <td>{{ u.username }}</td>
+              <td>
+                <select
+                  :value="u.group_name"
+                  @change="
+                    api
+                      .planWebUserSetGroup(u.username, ($event.target as HTMLSelectElement).value)
+                      .then(() => refetchWebUsers())
+                  "
+                >
+                  <option value="admin">admin</option>
+                  <option value="staff">staff</option>
+                  <option value="player">player</option>
+                </select>
+              </td>
+              <td class="pp-muted">{{ u.linked_to_uuid || '—' }}</td>
+              <td>
+                <PpButton
+                  variant="ghost"
+                  size="sm"
+                  @click="api.planWebUserLogout(u.username).then(() => refetchWebUsers())"
+                >
+                  Logout sessions
+                </PpButton>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div v-if="regCode" class="plan-register-code">
         <p>
           Your code:
@@ -1554,6 +1603,22 @@ const kpi = computed(() => {
   background: var(--color-bg-elevated);
   color: inherit;
 }
+.plan-users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+.plan-users-table th,
+.plan-users-table td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--color-border-subtle);
+  text-align: left;
+}
+.plan-web-users {
+  margin-top: 1rem;
+}
+
 .plan-register-code {
   margin-top: 0.75rem;
   padding: 0.75rem;
