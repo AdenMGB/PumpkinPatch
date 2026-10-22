@@ -91,8 +91,22 @@ pub struct PlanPlaceholderContext {
     pub player_session_length_longest_secs: u64,
     /// Players classified in the Regular activity group (indepth §7.2).
     pub players_regular: u64,
-    /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders.
+    /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders (all-time).
     pub top_playtime: Vec<(String, u64, u64)>,
+    pub top_playtime_day: Vec<(String, u64, u64)>,
+    pub top_playtime_week: Vec<(String, u64, u64)>,
+    pub top_playtime_month: Vec<(String, u64, u64)>,
+}
+
+/// Sort players by total playtime (desc) and keep the top `limit` rows.
+pub fn sort_top_playtime(
+    entries: Vec<(String, u64, u64)>,
+    limit: usize,
+) -> Vec<(String, u64, u64)> {
+    let mut entries = entries;
+    entries.sort_by_key(|(_, play, _)| std::cmp::Reverse(*play));
+    entries.truncate(limit);
+    entries
 }
 
 pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
@@ -367,8 +381,13 @@ fn resolve_top_placeholder(inner: &str, ctx: &PlanPlaceholderContext) -> Option<
     )
 }
 
-fn ranked_for_window(ctx: &PlanPlaceholderContext, _window_ms: i64) -> Vec<(String, u64, u64)> {
-    ctx.top_playtime.clone()
+fn ranked_for_window(ctx: &PlanPlaceholderContext, window_ms: i64) -> Vec<(String, u64, u64)> {
+    match window_ms {
+        DAY_MS => ctx.top_playtime_day.clone(),
+        WEEK_MS => ctx.top_playtime_week.clone(),
+        MONTH_MS => ctx.top_playtime_month.clone(),
+        _ => ctx.top_playtime.clone(),
+    }
 }
 
 fn playtime_in_window(triples: &[(i64, i64, u64)], now_ms: i64, window_ms: i64) -> (u64, u64) {
@@ -749,6 +768,23 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_top_amount_playtime_total_active_2%", &ctx).as_deref(),
             Some("2m 0s")
+        );
+    }
+
+    #[test]
+    fn top_leaderboard_uses_window_specific_lists() {
+        let ctx = PlanPlaceholderContext {
+            top_playtime: vec![("AllTime".into(), 9999, 0)],
+            top_playtime_day: vec![("Daily".into(), 100, 5)],
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_top_player_playtime_total_active_1%", &ctx).as_deref(),
+            Some("AllTime")
+        );
+        assert_eq!(
+            resolve_placeholder("%plan_top_player_playtime_day_active_1%", &ctx).as_deref(),
+            Some("Daily")
         );
     }
 }

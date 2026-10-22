@@ -75,6 +75,7 @@ struct QueryTokenQuery {
 }
 
 pub fn router(state: PlanHttpState) -> Router {
+    plan_resolver::ensure_builtin_resolver_routes();
     let export_dir = state.static_export_dir.clone();
     let session_protected = Router::new()
         .route("/v1/query", get(query_by_token).post(query))
@@ -1123,6 +1124,20 @@ mod tests {
         let response = app
             .oneshot(
                 Request::get("/v1/resolver/HarvestMetrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn resolver_pumpkinpatch_builtin_route() {
+        let app = router(test_state().await);
+        let response = app
+            .oneshot(
+                Request::get("/v1/resolver/PumpkinPatch")
                     .body(Body::empty())
                     .unwrap(),
             )

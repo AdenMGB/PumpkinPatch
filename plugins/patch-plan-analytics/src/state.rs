@@ -800,15 +800,28 @@ pub fn placeholder_context_for(
     online: u32,
 ) -> patch_plan_core::PlanPlaceholderContext {
     let now_ms = unix_now() * 1000;
-    let mut top: Vec<(String, u64, u64)> = rt
-        .players
-        .values()
-        .map(|p| (p.name.clone(), p.playtime_secs, p.afk_time_secs))
-        .collect();
-    top.sort_by_key(|(_, play, _)| std::cmp::Reverse(*play));
-    top.truncate(10);
-
     let now = unix_now();
+
+    let top_for_cutoff = |cutoff_unix: i64| -> Vec<(String, u64, u64)> {
+        let rows: Vec<(String, u64, u64)> = rt
+            .players
+            .values()
+            .map(|p| {
+                if cutoff_unix <= 0 {
+                    (p.name.clone(), p.playtime_secs, p.afk_time_secs)
+                } else {
+                    let (total, afk) = session_playtime_since(p, cutoff_unix);
+                    (p.name.clone(), total, afk)
+                }
+            })
+            .collect();
+        patch_plan_core::sort_top_playtime(rows, 10)
+    };
+
+    let top = top_for_cutoff(0);
+    let top_day = top_for_cutoff(now - 86_400);
+    let top_week = top_for_cutoff(now - 7 * 86_400);
+    let top_month = top_for_cutoff(now - 30 * 86_400);
     let avg_tps_since = |cutoff: i64| -> Option<f64> {
         let samples: Vec<f64> = rt
             .performance_samples
@@ -1101,7 +1114,26 @@ pub fn placeholder_context_for(
             patch_plan_core::ActivityGroup::Regular,
         ),
         top_playtime: top,
+        top_playtime_day: top_day,
+        top_playtime_week: top_week,
+        top_playtime_month: top_month,
     }
+}
+
+fn session_playtime_since(p: &patch_analytics_protocol::PlayerStats, cutoff_unix: i64) -> (u64, u64) {
+    let mut total = 0u64;
+    let mut afk = 0u64;
+    for s in &p.completed_sessions {
+        if s.end_unix < cutoff_unix {
+            continue;
+        }
+        let start = s.start_unix.max(cutoff_unix);
+        let span = (s.end_unix - start).max(0) as u64;
+        let afk_clip = s.afk_secs.min(span);
+        afk += afk_clip;
+        total += span;
+    }
+    (total, afk)
 }
 
 pub fn gamemode_label(mode: pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMode) -> String {

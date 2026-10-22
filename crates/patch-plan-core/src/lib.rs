@@ -17,7 +17,7 @@ pub use activity_index::{
 pub use data_extension::{ExtensionIcon, ExtensionValue, PlanDataExtension};
 pub use geolocation::{geolocation_from_ip, set_geolite_mmdb_path};
 pub use join_address::{normalize_join_address, JoinAddressOptions};
-pub use placeholders::{PlanPlaceholderContext, resolve_placeholder};
+pub use placeholders::{PlanPlaceholderContext, resolve_placeholder, sort_top_playtime};
 pub use session::{
     ActiveSession, AfkTracker, GameMode, WorldTimes, DEFAULT_AFK_THRESHOLD_MS,
 };

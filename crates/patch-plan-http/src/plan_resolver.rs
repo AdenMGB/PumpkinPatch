@@ -11,8 +11,30 @@ use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 use crate::PlanHttpState;
+use patch_plan_core::plan_capabilities_v1;
 
 type ResolverHandler = fn() -> Value;
+
+static BUILTIN_RESOLVERS: OnceLock<()> = OnceLock::new();
+
+pub fn ensure_builtin_resolver_routes() {
+    BUILTIN_RESOLVERS.get_or_init(|| {
+        register_resolver_route("pumpkinpatch", || {
+            json!({
+                "plugin": "PumpkinPatch",
+                "version": "1",
+                "capabilities": plan_capabilities_v1(),
+            })
+        });
+        register_resolver_route("plan", || {
+            json!({
+                "plugin": "Plan",
+                "native": "patch-plan-analytics",
+                "capabilities": plan_capabilities_v1(),
+            })
+        });
+    });
+}
 
 fn registry() -> &'static RwLock<HashMap<String, ResolverHandler>> {
     static REG: OnceLock<RwLock<HashMap<String, ResolverHandler>>> = OnceLock::new();
@@ -57,6 +79,7 @@ pub async fn resolver_plugin_get(
     State(st): State<PlanHttpState>,
     Path(plugin): Path<String>,
 ) -> impl IntoResponse {
+    ensure_builtin_resolver_routes();
     let key = plugin.to_ascii_lowercase();
     if key == "harvestmetrics" {
         return Json(harvest_metrics_status(&st).await).into_response();
