@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod console;
 pub mod network;
 pub mod orchestration;
+pub mod plugins_resolve;
 pub mod plan_http;
 pub mod ping;
 pub mod server;

@@ -161,10 +161,55 @@ CREATE TABLE IF NOT EXISTS plan_world_times (
 );
 
 CREATE INDEX IF NOT EXISTS plan_kills_date_index ON plan_kills(date);
+
+CREATE TABLE IF NOT EXISTS plan_web_group (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS plan_web_permission (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    permission TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS plan_web_group_to_permission (
+    group_id INTEGER NOT NULL,
+    permission_id INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES plan_web_group(id) ON DELETE CASCADE,
+    FOREIGN KEY (permission_id) REFERENCES plan_web_permission(id) ON DELETE CASCADE,
+    UNIQUE (group_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_security (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    salted_pass_hash TEXT NOT NULL,
+    linked_to_uuid TEXT NOT NULL DEFAULT '',
+    group_id INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES plan_web_group(id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_cookies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    web_username TEXT NOT NULL,
+    expires BIGINT NOT NULL,
+    cookie TEXT NOT NULL UNIQUE,
+    FOREIGN KEY (web_username) REFERENCES plan_security(username) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plan_access_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time BIGINT NOT NULL,
+    from_ip TEXT,
+    request_method TEXT NOT NULL,
+    request_uri TEXT NOT NULL,
+    response_code INTEGER NOT NULL
+);
 ";
 
 pub async fn ensure_plan_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::raw_sql(PLAN_SCHEMA).execute(pool).await?;
+    crate::plan_auth::ensure_plan_web_security(pool).await?;
     let _ = sqlx::query("ALTER TABLE plan_user_info ADD COLUMN nick TEXT NOT NULL DEFAULT ''")
         .execute(pool)
         .await;

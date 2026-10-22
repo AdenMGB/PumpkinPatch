@@ -143,6 +143,14 @@ pub async fn network_start(
     )
     .await;
 
+    let bridge_bind = format!("{}:25589", settings.bind_host);
+    if let Ok(addr) = bridge_bind.parse() {
+        let bridge = velocity_bridge::VelocityBridge::new();
+        tokio::spawn(async move {
+            let _ = bridge.serve(addr).await;
+        });
+    }
+
     let mut processes = inner.processes.write().await;
     processes
         .start_network(

@@ -13,7 +13,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Test core crates
         run: |
-          cargo test -p patch-plan-core -p vineyard-protocol -p vineyard-bus -p gourd-proxy -p harvest-metrics -p patch-core
+          cargo test -p patch-plan-core -p vineyard-protocol -p vineyard-bus -p gourd-proxy -p harvest-metrics -p patch-core -p patch-plugin-resolve -p velocity-bridge -p pumpkin-hook-sdk
 
   frontend:
     runs-on: ubuntu-latest

@@ -1,0 +1,9 @@
+[package]
+name = "patch-plugin-resolve"
+version = "0.1.0"
+edition.workspace = true
+description = "PubGrub plugin dependency SAT solver (plangem.md §4.2)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"

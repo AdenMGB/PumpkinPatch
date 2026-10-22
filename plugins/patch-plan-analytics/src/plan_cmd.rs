@@ -1,6 +1,6 @@
 //! In-game `/patchplan` and `/plan` commands (Plan §7 subset).
 
-use crate::state::{player_id, unix_now, with_runtime};
+use crate::state::{persist_state, player_id, unix_now, with_runtime, write_export};
 use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
 use pumpkin_plugin_api::command::{
     Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs,
@@ -25,7 +25,9 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
             ),
         )
         .then(CommandNode::literal("info").execute(InfoHandler))
-        .then(CommandNode::literal("json").execute(JsonHandler));
+        .then(CommandNode::literal("json").execute(JsonHandler))
+        .then(CommandNode::literal("servers").execute(ServersListHandler))
+        .then(CommandNode::literal("reload").execute(ReloadHandler));
     context.register_command(cmd, "patchplan.command");
     Ok(())
 }
@@ -242,6 +244,60 @@ impl CommandHandler for JsonHandler {
             "§7No player row yet — rejoin after Patch Plan WASM is deployed.".into()
         });
         player.send_system_message(TextComponent::text(&msg), false);
+        Ok(1)
+    }
+}
+
+struct ServersListHandler;
+
+impl CommandHandler for ServersListHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let lines = with_runtime(|rt| {
+            let mut out = vec!["§6Patch Plan§r — this server export:".to_string()];
+            out.push(format!(
+                "§7Players tracked: §f{}§7 · sessions closed: §f{}",
+                rt.players.len(),
+                rt.players
+                    .values()
+                    .map(|p| p.completed_sessions.len())
+                    .sum::<usize>()
+            ));
+            out.push("§7Open Pumpkin Patch Analytics for full network server list.".into());
+            out
+        })
+        .unwrap_or_else(|| vec!["§7No runtime state.".into()]);
+        for line in lines {
+            player.send_system_message(TextComponent::text(&line), false);
+        }
+        Ok(1)
+    }
+}
+
+struct ReloadHandler;
+
+impl CommandHandler for ReloadHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let _ = with_runtime(|rt| {
+            let online = server.get_player_count();
+            write_export(rt, online).ok();
+            persist_state(rt).ok();
+        });
+        player.send_system_message(
+            TextComponent::text("§aPatch Plan§r reloaded export snapshot for this server."),
+            false,
+        );
         Ok(1)
     }
 }

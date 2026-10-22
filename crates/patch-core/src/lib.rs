@@ -9,6 +9,7 @@ mod plan_perf;
 mod plan_query;
 mod plan_store;
 mod plan_sync;
+mod plan_auth;
 mod plan_extension;
 mod plan_export;
 mod plan_theme;
@@ -63,6 +64,7 @@ pub use plan_extension::{
     ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,
     PlanExtensionPlugin, PlanExtensionTab,
 };
+pub use plan_auth::{login as plan_web_login, validate_cookie as plan_validate_cookie, log_access as plan_log_access};
 pub use plan_export::{default_export_dir, export_plan_static_bundle};
 pub use plan_theme::plan_theme_json;
 pub use orchestration::{

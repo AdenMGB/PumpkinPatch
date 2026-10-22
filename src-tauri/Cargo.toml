@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 patch-core = { path = "../crates/patch-core" }
 patch-plan-http = { path = "../crates/patch-plan-http" }
 vineyard-protocol = { path = "../crates/vineyard-protocol" }
+velocity-bridge = { path = "../crates/velocity-bridge" }
+patch-plugin-resolve = { path = "../crates/patch-plugin-resolve" }
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"

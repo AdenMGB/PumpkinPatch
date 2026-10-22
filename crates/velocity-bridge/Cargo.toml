@@ -1,0 +1,13 @@
+[package]
+name = "velocity-bridge"
+version = "0.1.0"
+edition.workspace = true
+description = "PumpkinPatch ↔ Java Velocity dynamic routing bridge (plangem.md Phase 1)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }
+thiserror = "2"
+uuid = { version = "1", features = ["serde"] }
+vineyard-protocol = { path = "../vineyard-protocol" }

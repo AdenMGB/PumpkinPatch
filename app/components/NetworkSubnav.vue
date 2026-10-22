@@ -6,6 +6,7 @@ import {
   Cog6ToothIcon,
   ChartBarIcon,
   ShareIcon,
+  GlobeAltIcon,
 } from '@heroicons/vue/24/outline'
 
 const route = useRoute()
@@ -16,6 +17,7 @@ const links = computed(() => [
   { to: `/networks/${id.value}/settings`, label: 'Settings', icon: Cog6ToothIcon, exact: false },
   { to: `/networks/${id.value}/analytics`, label: 'Analytics', icon: ChartBarIcon, exact: false },
   { to: `/networks/${id.value}/topology`, label: 'Topology', icon: ShareIcon, exact: false },
+  { to: `/networks/${id.value}/world`, label: 'World 3D', icon: GlobeAltIcon, exact: false },
   { to: `/networks/${id.value}/plugins`, label: 'Plugins', icon: PuzzlePieceIcon, exact: false },
   { to: `/networks/${id.value}/console`, label: 'Console', icon: CommandLineIcon, exact: false },
 ])

@@ -9,6 +9,7 @@ use axum::{
 };
 use patch_core::{
     execute_plan_query, extension_data_v1, list_join_addresses, list_kills, network_overview_v1,
+    plan_log_access, plan_web_login,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, PlanQueryRequest,
@@ -57,7 +58,28 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/filters", get(filters))
         .route("/v1/query", post(query))
         .route("/v1/theme", get(theme))
+        .route("/v1/auth/login", post(auth_login))
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct LoginBody {
+    username: String,
+    password: String,
+}
+
+async fn auth_login(
+    State(st): State<PlanHttpState>,
+    Json(body): Json<LoginBody>,
+) -> impl IntoResponse {
+    match plan_web_login(&st.pool, &body.username, &body.password).await {
+        Ok(Some(cookie)) => {
+            let _ = plan_log_access(&st.pool, None, "POST", "/v1/auth/login", 200).await;
+            Json(serde_json::json!({ "cookie": cookie })).into_response()
+        }
+        Ok(None) => (StatusCode::UNAUTHORIZED, "invalid credentials").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 pub async fn serve(bind: SocketAddr, state: PlanHttpState) -> Result<(), std::io::Error> {

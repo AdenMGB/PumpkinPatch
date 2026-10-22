@@ -90,6 +90,7 @@ pub fn run() {
             api::orchestration::analytics_harvest_sync,
             api::plan_http::plan_http_start,
             api::telemetry::subscribe_live_telemetry,
+            api::plugins_resolve::plugins_resolve_install_order,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

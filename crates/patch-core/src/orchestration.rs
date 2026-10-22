@@ -82,16 +82,27 @@ pub fn hot_wire_velocity_toml(
         servers,
     )?;
     let toml_path = hub_path.join("velocity.toml");
-    let mut content = std::fs::read_to_string(&toml_path)?;
-    for host in &spec.forced_hosts {
-        if !content.contains(&format!("\"{}\" = [", host)) {
-            content = content.replace(
-                "[forced-hosts]\n",
-                &format!("[forced-hosts]\n\"{}\" = [\"{}\"]\n", host, backend.velocity_name),
-            );
+    let content = std::fs::read_to_string(&toml_path)?;
+    let mut doc = content
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| Error::InvalidState(e.to_string()))?;
+    if let Some(forced) = doc.get_mut("forced-hosts") {
+        if let Some(table) = forced.as_table_mut() {
+            for host in &spec.forced_hosts {
+                table.insert(
+                    host,
+                    toml_edit::Item::Value(toml_edit::Value::Array(
+                        toml_edit::Array::from_iter([
+                            toml_edit::Value::String(toml_edit::Formatted::new(
+                                backend.velocity_name.clone(),
+                            )),
+                        ]),
+                    )),
+                );
+            }
         }
     }
-    std::fs::write(toml_path, content)?;
+    std::fs::write(toml_path, doc.to_string())?;
     Ok(format!(
         "Live-wired '{}' to proxy on port {}",
         spec.server_alias,
