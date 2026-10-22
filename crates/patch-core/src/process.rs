@@ -6,6 +6,7 @@ use crate::port_wait::wait_for_tcp_port;
 use crate::rcon::send_rcon_command;
 use crate::models::{NetworkRecord, NetworkRuntimeStatus, ServerRecord};
 use gourd_proxy::{GourdConfig, GourdProxy, GourdRouter};
+use vineyard_protocol::RouteWireSpec;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -40,6 +41,7 @@ struct ManagedHub {
 pub struct RunningNetwork {
     pub network_id: Uuid,
     hub: ManagedHub,
+    gourd_router: Option<GourdRouter>,
     servers: HashMap<Uuid, ManagedPumpkin>,
 }
 
@@ -65,6 +67,37 @@ impl ProcessSupervisor {
 
     pub fn is_running(&self, network_id: Uuid) -> bool {
         self.running.contains_key(&network_id)
+    }
+
+    /// Live-update Gourd virtual-host routing when topology hot-wire runs.
+    pub async fn apply_gourd_route(
+        &self,
+        network_id: Uuid,
+        spec: &RouteWireSpec,
+        servers: &[ServerRecord],
+    ) -> Result<()> {
+        let running = self
+            .running
+            .get(&network_id)
+            .ok_or_else(|| Error::InvalidState("network not running".into()))?;
+        let router = running
+            .gourd_router
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("network hub is not Gourd".into()))?;
+        let backend = servers
+            .iter()
+            .find(|s| s.id == spec.backend_server_id)
+            .ok_or_else(|| Error::InvalidState("backend server not found".into()))?;
+        let addr: SocketAddr = format!("{}:{}", VELOCITY_BACKEND_HOST, backend.game_port)
+            .parse()
+            .map_err(|e| Error::Other(format!("invalid backend address: {e}")))?;
+        router
+            .register_route(&spec.server_alias, addr)
+            .await;
+        for host in &spec.forced_hosts {
+            router.register_forced_host(host, &spec.server_alias).await;
+        }
+        Ok(())
     }
 
     pub async fn start_network(
@@ -94,6 +127,7 @@ impl ProcessSupervisor {
         let lobbies: Vec<_> = servers.iter().filter(|s| s.role == "lobby").collect();
 
         let mut hub_child: Option<ManagedHub> = None;
+        let mut gourd_router: Option<GourdRouter> = None;
 
         let start_result: Result<()> = async {
             orchestrator.sync_network_instances(network, servers, bind_host)?;
@@ -155,26 +189,26 @@ impl ProcessSupervisor {
                 spawned_children.insert(extra.id, child);
             }
 
-            hub_child = if gourd_enabled {
-                Some(
-                    spawn_gourd(
-                        network,
-                        servers,
-                        bind_host,
-                        &hub_path,
-                        log_tx.clone(),
-                    )
-                    .await?,
+            if gourd_enabled {
+                let (hub, router) = spawn_gourd(
+                    network,
+                    servers,
+                    bind_host,
+                    &hub_path,
+                    log_tx.clone(),
                 )
+                .await?;
+                gourd_router = Some(router);
+                hub_child = Some(hub);
             } else {
-                Some(spawn_velocity(
+                hub_child = Some(spawn_velocity(
                     java_path,
                     &velocity_jar,
                     &hub_path,
                     network.id,
                     log_tx.clone(),
-                )?)
-            };
+                )?);
+            }
 
             Ok(())
         }
@@ -193,11 +227,13 @@ impl ProcessSupervisor {
         }
 
         let hub = hub_child.ok_or_else(|| Error::Other("velocity hub missing after start".into()))?;
+
         self.running.insert(
             network.id,
             RunningNetwork {
                 network_id: network.id,
                 hub,
+                gourd_router,
                 servers: spawned_children,
             },
         );
@@ -436,7 +472,7 @@ async fn spawn_gourd(
     bind_host: &str,
     hub_path: &PathBuf,
     log_tx: Option<mpsc::UnboundedSender<LogLine>>,
-) -> Result<ManagedHub> {
+) -> Result<(ManagedHub, GourdRouter)> {
     let hub_settings = read_hub_settings(hub_path)?;
     let bind: SocketAddr = format!("{}:{}", bind_host, network.hub_port)
         .parse()
@@ -451,7 +487,7 @@ async fn spawn_gourd(
             version_name: "1.21.4".into(),
             protocol_version: 767,
         },
-        router,
+        router.clone(),
     );
     let task = tokio::spawn(async move {
         if let Some(tx) = log_tx {
@@ -463,11 +499,14 @@ async fn spawn_gourd(
         }
         let _ = proxy.run().await;
     });
-    Ok(ManagedHub {
-        velocity_child: None,
-        gourd_task: Some(task),
-        stdin: None,
-    })
+    Ok((
+        ManagedHub {
+            velocity_child: None,
+            gourd_task: Some(task),
+            stdin: None,
+        },
+        router,
+    ))
 }
 
 fn strip_velocity_motd(motd: &str) -> String {

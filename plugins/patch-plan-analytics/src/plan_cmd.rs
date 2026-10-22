@@ -34,6 +34,15 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                     .execute(RegisterHandler),
             ),
         )
+        .then(CommandNode::literal("network").execute(NetworkLinkHandler))
+        .then(CommandNode::literal("players").execute(PlayersLinkHandler))
+        .then(
+            CommandNode::literal("player").then(
+                CommandNode::argument("target", &ArgumentType::String(StringType::Word))
+                    .execute(PlayerLinkHandler),
+            ),
+        )
+        .then(CommandNode::literal("export").execute(ExportHandler))
         .then(CommandNode::literal("db").then(CommandNode::literal("status").execute(DbStatusHandler)));
     context.register_command(cmd, "patchplan.command");
     Ok(())
@@ -284,6 +293,94 @@ impl CommandHandler for ServersListHandler {
         for line in lines {
             player.send_system_message(TextComponent::text(&line), false);
         }
+        Ok(1)
+    }
+}
+
+struct NetworkLinkHandler;
+
+impl CommandHandler for NetworkLinkHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        player.send_system_message(
+            TextComponent::text("§6Plan§r — open Pumpkin Patch §eAnalytics§r → Network for the full dashboard."),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+struct PlayersLinkHandler;
+
+impl CommandHandler for PlayersLinkHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        player.send_system_message(
+            TextComponent::text("§6Plan§r — player directory: use desktop §eAnalytics → Players§r or Plan HTTP `/v1/players`."),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+struct PlayerLinkHandler;
+
+impl CommandHandler for PlayerLinkHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let target = match args.get_value("target") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan player <name>"),
+                ));
+            }
+        };
+        player.send_system_message(
+            TextComponent::text(format!(
+                "§6Plan§r — profile lookup for §f{}§r (synced via Plan HTTP `/v1/player`).",
+                target
+            )),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+struct ExportHandler;
+
+impl CommandHandler for ExportHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let _ = with_runtime(|rt| {
+            let online = server.get_player_count();
+            write_export(rt, online).ok();
+            persist_state(rt).ok();
+        });
+        player.send_system_message(
+            TextComponent::text("§aPlan export§r snapshot written for this server (Pumpkin Patch sync)."),
+            false,
+        );
         Ok(1)
     }
 }

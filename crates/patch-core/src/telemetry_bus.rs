@@ -18,6 +18,19 @@ pub fn spawn_host_telemetry_sampler(state: &AppState, server_id: Uuid, players_o
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_nanos() as u64)
                 .unwrap_or(0);
+            let hot_chunk_count = 3u8;
+            let mut hot_chunks =
+                std::array::from_fn(|_| ChunkHeatSample::default());
+            for (i, sample) in hot_chunks.iter_mut().take(hot_chunk_count as usize).enumerate() {
+                *sample = ChunkHeatSample {
+                    dimension_id: 0,
+                    chunk_x: (i as i32) - 1,
+                    chunk_z: (tick as i32 % 5) - 2,
+                    tick_cost_us: 2_000 + (i as u32) * 1_500 + (tick % 7) as u32 * 200,
+                    entity_count: (players_online as u16).min(64),
+                    packet_bytes_emitted: 512 + i as u32 * 128,
+                };
+            }
             let frame = TickTelemetryFrame {
                 server_id: server_bytes,
                 tick_number: tick,
@@ -31,8 +44,8 @@ pub fn spawn_host_telemetry_sampler(state: &AppState, server_id: Uuid, players_o
                 online_players: players_online.min(u16::MAX as u32) as u16,
                 loaded_chunks: players_online.saturating_mul(32),
                 entity_count: players_online.saturating_mul(8),
-                hot_chunk_count: 0,
-                hot_chunks: std::array::from_fn(|_| ChunkHeatSample::default()),
+                hot_chunk_count,
+                hot_chunks,
             };
             let _ = bus.publish_frame(&frame);
         }

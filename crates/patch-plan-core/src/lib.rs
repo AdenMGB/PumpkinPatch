@@ -4,6 +4,7 @@ mod activity_index;
 mod data_extension;
 mod geolocation;
 mod join_address;
+mod placeholders;
 mod session;
 
 pub use activity_index::{
@@ -13,6 +14,7 @@ pub use activity_index::{
 pub use data_extension::{ExtensionIcon, ExtensionValue, PlanDataExtension};
 pub use geolocation::geolocation_from_ip;
 pub use join_address::{normalize_join_address, JoinAddressOptions};
+pub use placeholders::{PlanPlaceholderContext, resolve_placeholder};
 pub use session::{
     ActiveSession, AfkTracker, GameMode, WorldTimes, DEFAULT_AFK_THRESHOLD_MS,
 };

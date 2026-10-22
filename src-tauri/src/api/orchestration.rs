@@ -36,6 +36,18 @@ pub async fn network_hot_wire_server_to_proxy(
         &spec,
     )?;
     inner.velocity_bridge.apply(spec.clone()).await;
+    {
+        let processes = inner.processes.read().await;
+        match processes
+            .apply_gourd_route(network_id, &spec, &servers)
+            .await
+        {
+            Ok(()) => {}
+            Err(patch_core::Error::InvalidState(msg))
+                if msg == "network hub is not Gourd" => {}
+            Err(e) => return Err(e.into()),
+        }
+    }
     inner
         .vineyard_bus
         .publish_route_mutation(spec.clone())
