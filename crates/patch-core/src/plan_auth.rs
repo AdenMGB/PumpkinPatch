@@ -66,7 +66,20 @@ pub async fn ensure_plan_web_security(pool: &SqlitePool) -> Result<()> {
 }
 
 pub fn hash_password(password: &str) -> Result<String> {
-    Ok(format!("bcrypt-stub:{:x}", stable_hash(password)))
+    bcrypt::hash(password, bcrypt::DEFAULT_COST)
+        .map_err(|e| crate::error::Error::Other(format!("password hash failed: {e}")))
+}
+
+pub fn verify_password(password: &str, stored: &str) -> bool {
+    if stored.starts_with("bcrypt-stub:") {
+        return legacy_stub_verify(password, stored);
+    }
+    bcrypt::verify(password, stored).unwrap_or(false)
+}
+
+fn legacy_stub_verify(password: &str, stored: &str) -> bool {
+    let expected = format!("bcrypt-stub:{:x}", stable_hash(password));
+    expected == stored
 }
 
 fn stable_hash(password: &str) -> u64 {
@@ -75,10 +88,6 @@ fn stable_hash(password: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     password.hash(&mut hasher);
     hasher.finish()
-}
-
-pub fn verify_password(password: &str, stored: &str) -> bool {
-    hash_password(password).map(|h| h == stored).unwrap_or(false)
 }
 
 pub async fn login(

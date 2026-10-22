@@ -7,7 +7,10 @@ description = "Gourd — Velocity-compatible Rust edge proxy core (plangem.md §
 [dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }
 thiserror = "2"
-tracing = "0.1"
+hmac = "0.12"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+md5 = "0.7"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "time"] }

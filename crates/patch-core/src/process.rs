@@ -1,17 +1,21 @@
 use crate::error::{Error, Result};
+use crate::hub_settings::read_hub_settings;
 use crate::instance_config::{rcon_password_for_server, rcon_port_for_game_port};
-use crate::network::NetworkOrchestrator;
+use crate::network::{NetworkOrchestrator, VELOCITY_BACKEND_HOST};
 use crate::port_wait::wait_for_tcp_port;
 use crate::rcon::send_rcon_command;
 use crate::models::{NetworkRecord, NetworkRuntimeStatus, ServerRecord};
+use gourd_proxy::{GourdConfig, GourdProxy, GourdRouter};
 use serde::Serialize;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use uuid::Uuid;
 
@@ -28,7 +32,8 @@ struct ManagedPumpkin {
 }
 
 struct ManagedHub {
-    child: Child,
+    velocity_child: Option<Child>,
+    gourd_task: Option<JoinHandle<()>>,
     stdin: Option<ChildStdin>,
 }
 
@@ -70,6 +75,7 @@ impl ProcessSupervisor {
         velocity_jar: PathBuf,
         java_path: &str,
         bind_host: &str,
+        gourd_enabled: bool,
         orchestrator: &NetworkOrchestrator,
         log_tx: Option<mpsc::UnboundedSender<LogLine>>,
     ) -> Result<()> {
@@ -149,13 +155,26 @@ impl ProcessSupervisor {
                 spawned_children.insert(extra.id, child);
             }
 
-            hub_child = Some(spawn_velocity(
-                java_path,
-                &velocity_jar,
-                &hub_path,
-                network.id,
-                log_tx.clone(),
-            )?);
+            hub_child = if gourd_enabled {
+                Some(
+                    spawn_gourd(
+                        network,
+                        servers,
+                        bind_host,
+                        &hub_path,
+                        log_tx.clone(),
+                    )
+                    .await?,
+                )
+            } else {
+                Some(spawn_velocity(
+                    java_path,
+                    &velocity_jar,
+                    &hub_path,
+                    network.id,
+                    log_tx.clone(),
+                )?)
+            };
 
             Ok(())
         }
@@ -167,8 +186,7 @@ impl ProcessSupervisor {
                 let _ = managed.child.wait().await;
             }
             if let Some(mut hub) = hub_child {
-                let _ = hub.child.start_kill();
-                let _ = hub.child.wait().await;
+                stop_managed_hub(&mut hub).await;
             }
             self.statuses.insert(network.id, NetworkRuntimeStatus::Error);
             return Err(err);
@@ -216,12 +234,11 @@ impl ProcessSupervisor {
         }
 
         let RunningNetwork {
-            hub,
+            mut hub,
             servers: mut pumpkin_children,
             ..
         } = running;
-        let mut hub_child = hub.child;
-        if let Some(mut stdin) = hub.stdin {
+        if let Some(mut stdin) = hub.stdin.as_mut() {
             let _ = stdin.write_all(b"shutdown\n").await;
             let _ = stdin.flush().await;
         }
@@ -230,11 +247,13 @@ impl ProcessSupervisor {
             for (_, managed) in pumpkin_children.iter_mut() {
                 let _ = managed.child.wait().await;
             }
-            let _ = hub_child.wait().await;
+            if let Some(child) = hub.velocity_child.as_mut() {
+                let _ = child.wait().await;
+            }
         })
         .await;
 
-        self.force_kill_children(&mut pumpkin_children, &mut hub_child)
+        self.force_kill_children(&mut pumpkin_children, &mut hub)
             .await;
         self.statuses.insert(network_id, NetworkRuntimeStatus::Stopped);
         Ok(())
@@ -243,14 +262,13 @@ impl ProcessSupervisor {
     async fn force_kill_children(
         &mut self,
         servers: &mut HashMap<Uuid, ManagedPumpkin>,
-        hub: &mut Child,
+        hub: &mut ManagedHub,
     ) {
         for (_, managed) in servers.iter_mut() {
             let _ = managed.child.start_kill();
             let _ = managed.child.wait().await;
         }
-        let _ = hub.start_kill();
-        let _ = hub.wait().await;
+        stop_managed_hub(hub).await;
     }
 
     /// `target` is `"hub"` for Velocity, or a Pumpkin server UUID string.
@@ -272,6 +290,12 @@ impl ProcessSupervisor {
         }
 
         if target == "hub" || target.eq_ignore_ascii_case("velocity") {
+            if running.hub.gourd_task.is_some() {
+                return Err(Error::Other(
+                    "Gourd proxy has no interactive console; edit routes via topology hot-wire."
+                        .into(),
+                ));
+            }
             let stdin = running
                 .hub
                 .stdin
@@ -385,6 +409,85 @@ fn spawn_pumpkin(
     Ok(ManagedPumpkin { child, stdin })
 }
 
+async fn build_gourd_router(
+    network: &NetworkRecord,
+    servers: &[ServerRecord],
+) -> Result<GourdRouter> {
+    let lobby = servers
+        .iter()
+        .find(|s| s.role == "lobby")
+        .ok_or_else(|| Error::InvalidState("network has no lobby server".into()))?;
+    let default_backend: SocketAddr = format!("{}:{}", VELOCITY_BACKEND_HOST, lobby.game_port)
+        .parse()
+        .map_err(|e| Error::Other(format!("invalid lobby backend address: {e}")))?;
+    let router = GourdRouter::new(network.forwarding_secret.clone(), default_backend);
+    for server in servers {
+        let addr: SocketAddr = format!("{}:{}", VELOCITY_BACKEND_HOST, server.game_port)
+            .parse()
+            .map_err(|e| Error::Other(format!("invalid backend address: {e}")))?;
+        router.register_route(&server.velocity_name, addr).await;
+    }
+    Ok(router)
+}
+
+async fn spawn_gourd(
+    network: &NetworkRecord,
+    servers: &[ServerRecord],
+    bind_host: &str,
+    hub_path: &PathBuf,
+    log_tx: Option<mpsc::UnboundedSender<LogLine>>,
+) -> Result<ManagedHub> {
+    let hub_settings = read_hub_settings(hub_path)?;
+    let bind: SocketAddr = format!("{}:{}", bind_host, network.hub_port)
+        .parse()
+        .map_err(|e| Error::Other(format!("invalid gourd bind: {e}")))?;
+    let router = build_gourd_router(network, servers).await?;
+    let network_id = network.id;
+    let proxy = GourdProxy::new(
+        GourdConfig {
+            bind,
+            motd: strip_velocity_motd(&hub_settings.motd),
+            max_players: hub_settings.show_max_players as u16,
+            version_name: "1.21.4".into(),
+            protocol_version: 767,
+        },
+        router,
+    );
+    let task = tokio::spawn(async move {
+        if let Some(tx) = log_tx {
+            let _ = tx.send(LogLine {
+                network_id,
+                source: "gourd".into(),
+                line: format!("Gourd listening on {}", bind),
+            });
+        }
+        let _ = proxy.run().await;
+    });
+    Ok(ManagedHub {
+        velocity_child: None,
+        gourd_task: Some(task),
+        stdin: None,
+    })
+}
+
+fn strip_velocity_motd(motd: &str) -> String {
+    motd.replace("<#e67e22>", "")
+        .replace("<white>", "")
+        .replace('<', "")
+        .replace('>', "")
+}
+
+async fn stop_managed_hub(hub: &mut ManagedHub) {
+    if let Some(task) = hub.gourd_task.take() {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(child) = hub.velocity_child.as_mut() {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+    }
+}
+
 fn spawn_velocity(
     java_path: &str,
     jar: &PathBuf,
@@ -413,7 +516,11 @@ fn spawn_velocity(
         "velocity:err".into(),
         log_tx,
     );
-    Ok(ManagedHub { child, stdin })
+    Ok(ManagedHub {
+        velocity_child: Some(child),
+        gourd_task: None,
+        stdin,
+    })
 }
 
 fn pipe_logs<R: AsyncRead + Unpin + Send + 'static>(

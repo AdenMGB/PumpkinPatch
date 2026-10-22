@@ -1,4 +1,5 @@
 use crate::db::Database;
+use velocity_bridge::VelocityBridge;
 use vineyard_bus::VineyardBus;
 use crate::plan_json_cache::PlanJsonCache;
 use crate::error::Result;
@@ -20,6 +21,7 @@ pub struct AppState {
     pub processes: Arc<RwLock<ProcessSupervisor>>,
     pub plan_json_cache: Arc<PlanJsonCache>,
     pub vineyard_bus: VineyardBus,
+    pub velocity_bridge: Arc<VelocityBridge>,
     settings: Arc<RwLock<AppSettings>>,
 }
 
@@ -90,6 +92,7 @@ impl AppState {
             processes,
             plan_json_cache: PlanJsonCache::new(),
             vineyard_bus: VineyardBus::new(),
+            velocity_bridge: Arc::new(VelocityBridge::new()),
             settings: Arc::new(RwLock::new(settings)),
         })
     }

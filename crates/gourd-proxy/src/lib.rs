@@ -1,15 +1,20 @@
-//! Minimal Gourd proxy: Minecraft status + TCP login relay to a backend.
+//! Gourd edge proxy: status, login relay, Velocity MODERN forwarding (plangem.md §1.3).
+
+mod forwarding;
+mod router;
+
+pub use router::GourdRouter;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct GourdConfig {
     pub bind: SocketAddr,
-    pub backend: SocketAddr,
     pub motd: String,
     pub max_players: u16,
     pub version_name: String,
@@ -18,14 +23,16 @@ pub struct GourdConfig {
 
 pub struct GourdProxy {
     config: Arc<GourdConfig>,
+    router: GourdRouter,
     shutdown: watch::Sender<bool>,
 }
 
 impl GourdProxy {
-    pub fn new(config: GourdConfig) -> Self {
+    pub fn new(config: GourdConfig, router: GourdRouter) -> Self {
         let (shutdown, _) = watch::channel(false);
         Self {
             config: Arc::new(config),
+            router,
             shutdown,
         }
     }
@@ -39,9 +46,10 @@ impl GourdProxy {
                 accept = listener.accept() => {
                     let (stream, peer) = accept?;
                     let cfg = self.config.clone();
+                    let router = self.router.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_client(stream, peer, cfg).await {
-                            tracing::debug!("gourd client {peer} ended: {e}");
+                        if let Err(e) = handle_client(stream, peer, cfg, router).await {
+                            eprintln!("gourd client {peer} ended: {e}");
                         }
                     });
                 }
@@ -57,8 +65,9 @@ impl GourdProxy {
 
 async fn handle_client(
     mut client: TcpStream,
-    _peer: SocketAddr,
+    peer: SocketAddr,
     config: Arc<GourdConfig>,
+    router: GourdRouter,
 ) -> Result<(), std::io::Error> {
     let handshake = protocol::read_handshake(&mut client).await?;
     if handshake.next_state == 1 {
@@ -74,7 +83,8 @@ async fn handle_client(
         return Ok(());
     }
 
-    let mut backend = TcpStream::connect(config.backend).await?;
+    let backend_addr = router.resolve_backend(&handshake.server_address).await;
+    let mut backend = TcpStream::connect(backend_addr).await?;
     protocol::write_handshake_to_backend(
         &mut backend,
         handshake.protocol_version,
@@ -85,7 +95,14 @@ async fn handle_client(
     .await?;
 
     if handshake.next_state == 2 {
-        protocol::relay_login_preamble(&mut client, &mut backend).await?;
+        let addr = peer.ip().to_string();
+        protocol::relay_login_preamble(
+            &mut client,
+            &mut backend,
+            &router.forwarding_secret,
+            &addr,
+        )
+        .await?;
     }
 
     let (mut cr, mut cw) = client.into_split();
@@ -180,14 +197,106 @@ mod protocol {
         Ok(())
     }
 
+    /// Reads Login Start from the client, injects Velocity MODERN forwarding, forwards Login Start.
     pub async fn relay_login_preamble(
         client: &mut TcpStream,
         backend: &mut TcpStream,
+        forwarding_secret: &str,
+        client_address: &str,
     ) -> Result<(), std::io::Error> {
         let len = read_var_int(client).await?;
+        let mut login_start = vec![0u8; len as usize];
+        client.read_exact(&mut login_start).await?;
+
+        let mut cursor = &login_start[..];
+        let packet_id = read_var_int_buf(&mut cursor)?;
+        if packet_id != 0x00 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "expected login start",
+            ));
+        }
+        let username = read_string_buf(&mut cursor)?;
+        let uuid = parse_login_uuid(&mut cursor, &username);
+
+        let forward_payload = forwarding::modern_player_info(
+            forwarding_secret,
+            client_address,
+            uuid,
+            &username,
+        );
+        send_login_plugin_request(backend, 0, "velocity:player_info", &forward_payload).await?;
+        read_login_plugin_response(backend).await?;
+
+        write_packet(backend, &login_start).await?;
+        Ok(())
+    }
+
+    fn parse_login_uuid(cursor: &mut &[u8], username: &str) -> Uuid {
+        if cursor.is_empty() {
+            return offline_uuid(username);
+        }
+        let has_uuid = cursor[0] != 0;
+        *cursor = &cursor[1..];
+        if has_uuid && cursor.len() >= 16 {
+            let mut bytes = [0u8; 16];
+            bytes.copy_from_slice(&cursor[..16]);
+            *cursor = &cursor[16..];
+            return Uuid::from_bytes(bytes);
+        }
+        offline_uuid(username)
+    }
+
+    fn offline_uuid(username: &str) -> Uuid {
+        let digest = md5::compute(format!("OfflinePlayer:{}", username).as_bytes());
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(&digest.0);
+        bytes[6] = (bytes[6] & 0x0f) | 0x30;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Uuid::from_bytes(bytes)
+    }
+
+    async fn send_login_plugin_request(
+        backend: &mut TcpStream,
+        message_id: i32,
+        channel: &str,
+        data: &[u8],
+    ) -> Result<(), std::io::Error> {
+        let mut payload = Vec::new();
+        write_var_int(&mut payload, 0x04);
+        write_var_int(&mut payload, message_id);
+        write_string(&mut payload, channel);
+        write_var_int(&mut payload, data.len() as i32);
+        payload.extend_from_slice(data);
+        write_packet(backend, &payload).await?;
+        Ok(())
+    }
+
+    async fn read_login_plugin_response(backend: &mut TcpStream) -> Result<(), std::io::Error> {
+        let len = read_var_int(backend).await?;
         let mut buf = vec![0u8; len as usize];
-        client.read_exact(&mut buf).await?;
-        write_packet(backend, &buf).await?;
+        backend.read_exact(&mut buf).await?;
+        let mut cursor = &buf[..];
+        let packet_id = read_var_int_buf(&mut cursor)?;
+        if packet_id != 0x02 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "expected login plugin response",
+            ));
+        }
+        let _message_id = read_var_int_buf(&mut cursor)?;
+        if cursor.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "login plugin response truncated",
+            ));
+        }
+        if cursor[0] == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "backend rejected velocity forwarding",
+            ));
+        }
         Ok(())
     }
 
@@ -325,16 +434,21 @@ mod tests {
 
         let bind = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bind_addr = bind.local_addr().unwrap();
-        let proxy = GourdProxy::new(GourdConfig {
-            bind: bind_addr,
-            backend: backend_addr,
-            motd: "Gourd test".into(),
-            max_players: 100,
-            version_name: "1.21.4".into(),
-            protocol_version: 767,
-        });
+        let router = GourdRouter::new("test-secret".into(), backend_addr);
+        let proxy = GourdProxy::new(
+            GourdConfig {
+                bind: bind_addr,
+                motd: "Gourd test".into(),
+                max_players: 100,
+                version_name: "1.21.4".into(),
+                protocol_version: 767,
+            },
+            router,
+        );
         tokio::spawn(proxy.run());
 
-        let _ = timeout(Duration::from_secs(2), TcpStream::connect(bind_addr)).await.unwrap();
+        let _ = timeout(Duration::from_secs(2), TcpStream::connect(bind_addr))
+            .await
+            .unwrap();
     }
 }

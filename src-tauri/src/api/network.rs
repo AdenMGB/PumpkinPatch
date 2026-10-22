@@ -145,10 +145,14 @@ pub async fn network_start(
 
     let bridge_bind = format!("{}:25589", settings.bind_host);
     if let Ok(addr) = bridge_bind.parse() {
-        let bridge = velocity_bridge::VelocityBridge::new();
-        tokio::spawn(async move {
-            let _ = bridge.serve(addr).await;
-        });
+        let bridge = inner.velocity_bridge.clone();
+        static BRIDGE_STARTED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !BRIDGE_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            tokio::spawn(async move {
+                let _ = bridge.serve(addr).await;
+            });
+        }
     }
 
     let mut processes = inner.processes.write().await;
@@ -160,6 +164,7 @@ pub async fn network_start(
             velocity,
             &java_path,
             &settings.bind_host,
+            settings.gourd_enabled,
             &inner.networks,
             Some(log_tx),
         )

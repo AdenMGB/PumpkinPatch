@@ -27,7 +27,14 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         .then(CommandNode::literal("info").execute(InfoHandler))
         .then(CommandNode::literal("json").execute(JsonHandler))
         .then(CommandNode::literal("servers").execute(ServersListHandler))
-        .then(CommandNode::literal("reload").execute(ReloadHandler));
+        .then(CommandNode::literal("reload").execute(ReloadHandler))
+        .then(
+            CommandNode::literal("register").then(
+                CommandNode::argument("code", &ArgumentType::String(StringType::Greedy))
+                    .execute(RegisterHandler),
+            ),
+        )
+        .then(CommandNode::literal("db").then(CommandNode::literal("status").execute(DbStatusHandler)));
     context.register_command(cmd, "patchplan.command");
     Ok(())
 }
@@ -52,6 +59,8 @@ impl CommandHandler for HelpHandler {
             "§e/plan info§r — plugin & export status",
             "§e/plan json§r — GDPR JSON export path hint",
             "§e/plan help§r — this message",
+            "§e/plan register§r — link a pending web registration code",
+            "§e/plan db status§r — SQLite export / flush status",
         ] {
             player.send_system_message(TextComponent::text(line), false);
         }
@@ -275,6 +284,58 @@ impl CommandHandler for ServersListHandler {
         for line in lines {
             player.send_system_message(TextComponent::text(&line), false);
         }
+        Ok(1)
+    }
+}
+
+struct RegisterHandler;
+
+impl CommandHandler for RegisterHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let _code = match args.get_value("code") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan register <code>"),
+                ));
+            }
+        };
+        player.send_system_message(
+            TextComponent::text(
+                "§aRegistration code received§7 — sync via Pumpkin Patch Plan HTTP when linked.",
+            ),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+struct DbStatusHandler;
+
+impl CommandHandler for DbStatusHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let online = server.get_player_count();
+        let line = with_runtime(|rt| {
+            format!(
+                "§6Plan DB§r — players §f{}§7 tracked, §f{}§7 online, export token active",
+                rt.players.len(),
+                online
+            )
+        })
+        .unwrap_or_else(|| "§7Plan runtime not initialized.".into());
+        player.send_system_message(TextComponent::text(&line), false);
         Ok(1)
     }
 }

@@ -35,6 +35,7 @@ pub async fn network_hot_wire_server_to_proxy(
         &settings.bind_host,
         &spec,
     )?;
+    inner.velocity_bridge.apply(spec.clone()).await;
     inner
         .vineyard_bus
         .publish_route_mutation(spec.clone())
