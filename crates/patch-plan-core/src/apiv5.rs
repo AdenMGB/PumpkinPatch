@@ -39,5 +39,7 @@ mod tests {
         let v = plan_capabilities_v1();
         let caps = v["capabilities"].as_array().expect("capabilities array");
         assert!(caps.iter().any(|c| c == "DATA_EXTENSION_VALUES"));
+        assert!(caps.iter().any(|c| c == "QUERY_SERVICE_READ"));
+        assert_eq!(v["services"]["QueryService"]["write_enabled"], false);
     }
 }
