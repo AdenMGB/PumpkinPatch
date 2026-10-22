@@ -3,7 +3,7 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use vineyard_protocol::{pack_frame, TickTelemetryFrame};
+use vineyard_protocol::{pack_frame, pack_voice_position, TickTelemetryFrame, VoicePositionFrame};
 
 pub struct TelemetrySink {
     path: std::path::PathBuf,
@@ -53,5 +53,33 @@ impl TelemetrySink {
             hot_chunk_count: 0,
             hot_chunks: std::array::from_fn(|_| vineyard_protocol::ChunkHeatSample::default()),
         })
+    }
+}
+
+/// Length-prefixed `VP` frames for Tauri to tail into Vineyard (plangem.md §5.1).
+pub struct VoicePositionSink {
+    path: std::path::PathBuf,
+}
+
+impl VoicePositionSink {
+    pub fn open(dir: &Path) -> Self {
+        Self {
+            path: dir.join("vineyard-voice.bin"),
+        }
+    }
+
+    pub fn emit(&mut self, frame: &VoicePositionFrame) -> std::io::Result<()> {
+        let body = pack_voice_position(frame);
+        let len = body.len();
+        if len > u16::MAX as usize {
+            return Ok(());
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        file.write_all(&(len as u16).to_le_bytes())?;
+        file.write_all(&body)?;
+        Ok(())
     }
 }

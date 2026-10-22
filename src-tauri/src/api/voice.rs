@@ -39,29 +39,8 @@ pub struct TendrilVoiceFlushResult {
     pub output_dir: String,
 }
 
-fn spawn_vineyard_voice_bridge(bus: VineyardBus, engine: Arc<TendrilVoiceEngine>) {
-    tokio::spawn(async move {
-        let mut rx = bus.subscribe_voice_positions();
-        while let Ok(bytes) = rx.recv().await {
-            if let Some(frame) = try_unpack_voice_position(&bytes) {
-                let player_uuid = Uuid::from_bytes(frame.player_uuid).to_string();
-                engine.set_position(
-                    &player_uuid,
-                    VoicePosition {
-                        x: frame.x,
-                        y: frame.y,
-                        z: frame.z,
-                        dimension: frame.dimension,
-                    },
-                );
-            }
-        }
-    });
-}
-
-#[tauri::command]
-pub async fn tendril_voice_start(
-    state: tauri::State<'_, AppStateHandle>,
+pub async fn ensure_tendril_voice_running(
+    state: &AppStateHandle,
     bind: String,
     proximity_blocks: Option<f64>,
 ) -> Result<String> {
@@ -90,6 +69,35 @@ pub async fn tendril_voice_start(
     Ok(format!(
         "TendrilVoice SFU listening on {bind} (proximity {proximity} blocks); Vineyard position stream attached"
     ))
+}
+
+fn spawn_vineyard_voice_bridge(bus: VineyardBus, engine: Arc<TendrilVoiceEngine>) {
+    tokio::spawn(async move {
+        let mut rx = bus.subscribe_voice_positions();
+        while let Ok(bytes) = rx.recv().await {
+            if let Some(frame) = try_unpack_voice_position(&bytes) {
+                let player_uuid = Uuid::from_bytes(frame.player_uuid).to_string();
+                engine.set_position(
+                    &player_uuid,
+                    VoicePosition {
+                        x: frame.x,
+                        y: frame.y,
+                        z: frame.z,
+                        dimension: frame.dimension,
+                    },
+                );
+            }
+        }
+    });
+}
+
+#[tauri::command]
+pub async fn tendril_voice_start(
+    state: tauri::State<'_, AppStateHandle>,
+    bind: String,
+    proximity_blocks: Option<f64>,
+) -> Result<String> {
+    ensure_tendril_voice_running(&state, bind, proximity_blocks).await
 }
 
 /// Publish a player position on the Vineyard bus (Gourd backends / Pumpkin hook → SFU).

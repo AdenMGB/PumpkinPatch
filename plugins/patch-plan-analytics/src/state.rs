@@ -79,6 +79,7 @@ pub struct RuntimeState {
     /// When false, kick events are not counted (`/plan disable <kickcount>` prelude).
     pub kick_counting_enabled: bool,
     pub vineyard_sink: Option<pumpkin_hook_sdk::TelemetrySink>,
+    pub voice_position_sink: Option<pumpkin_hook_sdk::VoicePositionSink>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +141,43 @@ fn server_id_bytes(server_id: &str) -> [u8; 16] {
     uuid::Uuid::parse_str(server_id)
         .map(|u| *u.as_bytes())
         .unwrap_or([0u8; 16])
+}
+
+pub fn emit_vineyard_voice_position(
+    rt: &mut RuntimeState,
+    player: &Player,
+    x: f64,
+    y: f64,
+    z: f64,
+) {
+    let pid = player_id(player);
+    let player_uuid = uuid::Uuid::parse_str(&pid).ok();
+    let Some(player_uuid) = player_uuid else {
+        return;
+    };
+    let dimension = rt
+        .active_sessions
+        .get(&pid)
+        .map(|s| s.world_times.current_world.clone())
+        .unwrap_or_else(|| "minecraft:overworld".into());
+    if rt.voice_position_sink.is_none() {
+        rt.voice_position_sink =
+            Some(pumpkin_hook_sdk::VoicePositionSink::open(std::path::Path::new(
+                &rt.data_folder,
+            )));
+    }
+    let frame = vineyard_protocol::VoicePositionFrame {
+        player_uuid: *player_uuid.as_bytes(),
+        x,
+        y,
+        z,
+        yaw: 0.0,
+        pitch: 0.0,
+        dimension,
+    };
+    if let Some(sink) = &mut rt.voice_position_sink {
+        let _ = sink.emit(&frame);
+    }
 }
 
 fn emit_vineyard_telemetry(rt: &mut RuntimeState, online: u32, mspt: f64) {
@@ -770,8 +808,8 @@ pub fn placeholder_context_for(
     top.sort_by_key(|(_, play, _)| std::cmp::Reverse(*play));
     top.truncate(10);
 
-    let avg_tps_day = {
-        let cutoff = unix_now() - 86_400;
+    let now = unix_now();
+    let avg_tps_since = |cutoff: i64| -> Option<f64> {
         let samples: Vec<f64> = rt
             .performance_samples
             .iter()
@@ -784,8 +822,10 @@ pub fn placeholder_context_for(
             Some(samples.iter().sum::<f64>() / samples.len() as f64)
         }
     };
+    let avg_tps_day = avg_tps_since(now - 86_400);
+    let avg_tps_week = avg_tps_since(now - 7 * 86_400);
+    let avg_tps_month = avg_tps_since(now - 30 * 86_400);
 
-    let now = unix_now();
     let count_first_seen_since = |cutoff: i64| {
         rt.players
             .values()
@@ -993,6 +1033,8 @@ pub fn placeholder_context_for(
         session_triples,
         now_ms,
         avg_tps_day,
+        avg_tps_week,
+        avg_tps_month,
         avg_ping_day,
         avg_ping_week,
         avg_ping_month,

@@ -99,6 +99,7 @@ impl Plugin for PatchPlanPlugin {
             analytics_enabled: true,
             kick_counting_enabled: true,
             vineyard_sink: None,
+            voice_position_sink: None,
         };
         let _ = RUNTIME.set(std::sync::Mutex::new(rt));
 

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 use vineyard_bus::VineyardBus;
-use vineyard_protocol::{packed_frame_byte_length, ChunkHeatSample, TickTelemetryFrame};
+use vineyard_protocol::{
+    packed_frame_byte_length, try_unpack_voice_position, ChunkHeatSample, TickTelemetryFrame,
+};
 
 /// Tails `vineyard-telemetry.bin` written by `pumpkin-hook-sdk` on Pumpkin instances.
 pub fn spawn_instance_telemetry_tail(bus: VineyardBus, _server_id: Uuid, file: PathBuf) {
@@ -96,4 +98,56 @@ pub fn spawn_host_telemetry_sampler(state: &AppState, server_id: Uuid, players_o
 
 fn estimate_mspt_us(players: u32) -> u32 {
     45_000 + players.saturating_mul(120)
+}
+
+/// Tails `vineyard-voice.bin` (length-prefixed VP frames) from Pumpkin Plan plugin moves.
+pub fn spawn_instance_voice_position_tail(bus: VineyardBus, file: PathBuf) {
+    tokio::spawn(async move {
+        let mut offset: u64 = 0;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
+        loop {
+            interval.tick().await;
+            let meta = tokio::fs::metadata(&file).await;
+            if meta.is_err() {
+                continue;
+            }
+            let len = meta.unwrap().len();
+            if len < offset + 2 {
+                continue;
+            }
+            let mut file_handle = match tokio::fs::File::open(&file).await {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            use tokio::io::{AsyncReadExt, AsyncSeekExt};
+            if file_handle
+                .seek(std::io::SeekFrom::Start(offset))
+                .await
+                .is_err()
+            {
+                continue;
+            }
+            while offset + 2 <= len {
+                let mut hdr = [0u8; 2];
+                if file_handle.read_exact(&mut hdr).await.is_err() {
+                    break;
+                }
+                offset += 2;
+                let frame_len = u16::from_le_bytes(hdr) as u64;
+                if frame_len == 0 || offset + frame_len > len {
+                    offset -= 2;
+                    break;
+                }
+                let mut buf = vec![0u8; frame_len as usize];
+                if file_handle.read_exact(&mut buf).await.is_err() {
+                    offset -= 2;
+                    break;
+                }
+                offset += frame_len;
+                if let Some(frame) = try_unpack_voice_position(&buf) {
+                    bus.publish_voice_position_best_effort(&frame);
+                }
+            }
+        }
+    });
 }

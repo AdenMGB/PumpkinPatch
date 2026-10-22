@@ -28,6 +28,8 @@ pub struct PlanPlaceholderContext {
     pub session_triples: Vec<(i64, i64, u64)>,
     pub now_ms: i64,
     pub avg_tps_day: Option<f64>,
+    pub avg_tps_week: Option<f64>,
+    pub avg_tps_month: Option<f64>,
     pub avg_ping_day: Option<f64>,
     pub avg_ping_week: Option<f64>,
     pub avg_ping_month: Option<f64>,
@@ -196,9 +198,9 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         }
         "plan_player_activity_index" => Some(format_activity_index(ctx)),
         "plan_player_activity_group" => Some(activity_group_label(ctx)),
-        "plan_tps_day" | "plan_tps_week" | "plan_tps_month" => ctx
-            .avg_tps_day
-            .map(|t| format!("{:.2}", t)),
+        "plan_tps_day" => ctx.avg_tps_day.map(|t| format!("{:.2}", t)),
+        "plan_tps_week" => ctx.avg_tps_week.map(|t| format!("{:.2}", t)),
+        "plan_tps_month" => ctx.avg_tps_month.map(|t| format!("{:.2}", t)),
         "plan_ping_average_day" => ctx.avg_ping_day.map(|p| format!("{:.0}", p)),
         "plan_ping_average_week" => ctx.avg_ping_week.map(|p| format!("{:.0}", p)),
         "plan_ping_average_month" => ctx.avg_ping_month.map(|p| format!("{:.0}", p)),
@@ -433,6 +435,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_sessions_playtime_day_raw%", &ctx).as_deref(),
             Some("90000")
+        );
+    }
+
+    #[test]
+    fn resolves_tps_week_from_context() {
+        let ctx = PlanPlaceholderContext {
+            avg_tps_week: Some(19.5),
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_tps_week%", &ctx).as_deref(),
+            Some("19.50")
         );
     }
 

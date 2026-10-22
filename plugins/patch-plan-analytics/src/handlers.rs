@@ -1,5 +1,5 @@
 use crate::state::{
-    apply_player_identity, begin_session, end_session, gamemode_label,
+    apply_player_identity, begin_session, emit_vineyard_voice_position, end_session, gamemode_label,
     note_prelogin_geolocation, parse_pvp_killer_from_death_message, player_id, push_death,
     push_event, push_pvp_kill, push_sample, record_command_usage, record_stat,
     player_command_usage_exempt, register_online_ping, resolve_join_address, session_activity,
@@ -38,6 +38,8 @@ impl EventHandler<PlayerMoveEvent> for MoveHandler {
         if block_moved {
             with_analytics(|rt| {
                 session_activity(rt, &event.player, unix_now());
+                let pos = event.to_position;
+                emit_vineyard_voice_position(rt, &event.player, pos.0, pos.1, pos.2);
             });
         }
         event

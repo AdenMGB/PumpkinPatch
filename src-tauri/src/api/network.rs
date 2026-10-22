@@ -169,6 +169,22 @@ pub async fn network_start(
             Some(log_tx),
         )
         .await?;
+    for server in &servers {
+        let voice_path = std::path::PathBuf::from(&server.data_path).join("vineyard-voice.bin");
+        patch_core::telemetry_bus::spawn_instance_voice_position_tail(
+            inner.vineyard_bus.clone(),
+            voice_path,
+        );
+    }
+    drop(processes);
+    if settings.gourd_enabled && settings.tendril_voice_auto_gourd {
+        let bind = format!(
+            "{}:{}",
+            settings.bind_host,
+            settings.tendril_voice_udp_port
+        );
+        let _ = super::voice::ensure_tendril_voice_running(&state, bind, None).await;
+    }
     let _ = app.emit("network-started", id);
     Ok(())
 }

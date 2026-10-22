@@ -228,6 +228,12 @@ impl Database {
                 "harvest_duckdb_enabled" => settings.harvest_duckdb_enabled = value == "true",
                 "gourd_enabled" => settings.gourd_enabled = value == "true",
                 "plan_geolite_eula" => settings.plan_geolite_eula = value == "true",
+                "tendril_voice_udp_port" => {
+                    settings.tendril_voice_udp_port = value.parse().unwrap_or(24454);
+                }
+                "tendril_voice_auto_gourd" => {
+                    settings.tendril_voice_auto_gourd = value == "true";
+                }
                 _ => {}
             }
         }
@@ -302,6 +308,18 @@ impl Database {
             (
                 "plan_geolite_eula",
                 if settings.plan_geolite_eula {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+            (
+                "tendril_voice_udp_port",
+                settings.tendril_voice_udp_port.to_string(),
+            ),
+            (
+                "tendril_voice_auto_gourd",
+                if settings.tendril_voice_auto_gourd {
                     "true".into()
                 } else {
                     "false".into()

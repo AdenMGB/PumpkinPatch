@@ -48,6 +48,8 @@ export interface AppSettings {
   plan_http_port: number
   harvest_duckdb_enabled: boolean
   gourd_enabled: boolean
+  tendril_voice_udp_port?: number
+  tendril_voice_auto_gourd?: boolean
 }
 
 export interface PlanRegisterStartResponse {
