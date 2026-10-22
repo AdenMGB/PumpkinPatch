@@ -13,6 +13,7 @@ const DEFAULT_PERMISSIONS: &[&str] = &[
     "page.server.overview",
     "page.server.online.activity",
     "page.server.performance",
+    "page.server.allowlist.bounce",
     "page.player.self",
     "page.player.other",
     "access.player.list",
@@ -28,6 +29,7 @@ const DEFAULT_PERMISSIONS: &[&str] = &[
 const STAFF_PERMISSIONS: &[&str] = &[
     "page.network",
     "page.server",
+    "page.server.allowlist.bounce",
     "page.player.self",
     "page.player.other",
     "access.player.list",

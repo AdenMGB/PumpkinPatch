@@ -17,6 +17,7 @@ use axum::{
 };
 use patch_core::{
     execute_plan_query, execute_plan_sql_write, execute_readonly_sql, extension_data_merged,
+    game_allowlist_bounces_v1,
     ingest_signed_export,
     plan_data_clear_events_since, sync_all_servers_extensions,
     list_command_usages,
@@ -952,8 +953,14 @@ async fn statistics(State(st): State<PlanHttpState>, Query(q): Query<ServerQuery
     }
 }
 
-async fn game_allowlist_bounces() -> impl IntoResponse {
-    Json(serde_json::json!({ "bounces": [] }))
+async fn game_allowlist_bounces(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    match game_allowlist_bounces_v1(&st.pool, &st.network_id, q.server.as_deref()).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn plugin_history(

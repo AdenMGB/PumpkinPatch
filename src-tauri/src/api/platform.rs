@@ -64,3 +64,18 @@ pub async fn patch_cas_put_bytes(
         size: object.size,
     })
 }
+
+#[tauri::command]
+pub async fn patch_cas_materialize_blueprint(
+    state: tauri::State<'_, crate::state::AppStateHandle>,
+    digest: String,
+    target_dir: String,
+) -> Result<String> {
+    let inner = state.get().await?;
+    let root = inner.dirs.cache.join("cas");
+    let store = CasStore::new(root);
+    let path = store
+        .materialize_blueprint(&digest, std::path::Path::new(&target_dir))
+        .map_err(|e| patch_core::Error::Other(e.to_string()))?;
+    Ok(path.to_string_lossy().to_string())
+}

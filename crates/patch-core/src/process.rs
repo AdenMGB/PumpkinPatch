@@ -5,7 +5,8 @@ use crate::network::{NetworkOrchestrator, VELOCITY_BACKEND_HOST};
 use crate::port_wait::wait_for_tcp_port;
 use crate::rcon::send_rcon_command;
 use crate::models::{NetworkRecord, NetworkRuntimeStatus, ServerRecord};
-use gourd_proxy::{parse_pool_state, GourdConfig, GourdProxy, GourdRouter};
+use gourd_proxy::{parse_pool_state, GourdConfig, GourdProxy, GourdRouter, ScarecrowStats};
+use std::sync::Arc;
 use vineyard_protocol::RouteWireSpec;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -42,6 +43,7 @@ pub struct RunningNetwork {
     pub network_id: Uuid,
     hub: ManagedHub,
     gourd_router: Option<GourdRouter>,
+    gourd_scarecrow: Option<Arc<ScarecrowStats>>,
     servers: HashMap<Uuid, ManagedPumpkin>,
 }
 
@@ -105,6 +107,17 @@ impl ProcessSupervisor {
     }
 
     /// Promote hidden-ready Gourd backends into the join balancer (plangem.md §3.3).
+    pub fn gourd_scarecrow_stats(&self, network_id: Uuid) -> Option<(u64, u64)> {
+        self.running.get(&network_id).and_then(|n| {
+            n.gourd_scarecrow.as_ref().map(|s| {
+                (
+                    s.allowed.load(std::sync::atomic::Ordering::Relaxed),
+                    s.dropped.load(std::sync::atomic::Ordering::Relaxed),
+                )
+            })
+        })
+    }
+
     pub async fn promote_gourd_pool(&self, network_id: Uuid, count: u32) -> Result<Vec<String>> {
         let running = self
             .running
@@ -145,6 +158,7 @@ impl ProcessSupervisor {
 
         let mut hub_child: Option<ManagedHub> = None;
         let mut gourd_router: Option<GourdRouter> = None;
+        let mut gourd_scarecrow: Option<Arc<ScarecrowStats>> = None;
 
         let start_result: Result<()> = async {
             orchestrator.sync_network_instances(network, servers, bind_host)?;
@@ -207,7 +221,7 @@ impl ProcessSupervisor {
             }
 
             if gourd_enabled {
-                let (hub, router) = spawn_gourd(
+                let (hub, router, scarecrow) = spawn_gourd(
                     network,
                     servers,
                     bind_host,
@@ -216,6 +230,7 @@ impl ProcessSupervisor {
                 )
                 .await?;
                 gourd_router = Some(router);
+                gourd_scarecrow = Some(scarecrow);
                 hub_child = Some(hub);
             } else {
                 hub_child = Some(spawn_velocity(
@@ -251,6 +266,7 @@ impl ProcessSupervisor {
                 network_id: network.id,
                 hub,
                 gourd_router,
+                gourd_scarecrow,
                 servers: spawned_children,
             },
         );
@@ -489,7 +505,7 @@ async fn spawn_gourd(
     bind_host: &str,
     hub_path: &PathBuf,
     log_tx: Option<mpsc::UnboundedSender<LogLine>>,
-) -> Result<(ManagedHub, GourdRouter)> {
+) -> Result<(ManagedHub, GourdRouter, Arc<ScarecrowStats>)> {
     let hub_settings = read_hub_settings(hub_path)?;
     let bind: SocketAddr = format!("{}:{}", bind_host, network.hub_port)
         .parse()
@@ -506,6 +522,7 @@ async fn spawn_gourd(
         },
         router.clone(),
     );
+    let scarecrow = proxy.scarecrow.clone();
     let task = tokio::spawn(async move {
         if let Some(tx) = log_tx {
             let _ = tx.send(LogLine {
@@ -523,6 +540,7 @@ async fn spawn_gourd(
             stdin: None,
         },
         router,
+        scarecrow,
     ))
 }
 

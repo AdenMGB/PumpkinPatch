@@ -31,6 +31,24 @@ pub struct GourdPoolPromoteRequest {
     pub count: u32,
 }
 
+#[derive(serde::Serialize)]
+pub struct GourdScarecrowStats {
+    pub allowed: u64,
+    pub dropped: u64,
+}
+
+#[tauri::command]
+pub async fn gourd_scarecrow_stats(
+    state: tauri::State<'_, AppStateHandle>,
+    network_id: Uuid,
+) -> Result<Option<GourdScarecrowStats>> {
+    let inner = state.get().await?;
+    let processes = inner.processes.read().await;
+    Ok(processes.gourd_scarecrow_stats(network_id).map(|(allowed, dropped)| {
+        GourdScarecrowStats { allowed, dropped }
+    }))
+}
+
 #[tauri::command]
 pub async fn gourd_pool_promote(
     state: tauri::State<'_, AppStateHandle>,

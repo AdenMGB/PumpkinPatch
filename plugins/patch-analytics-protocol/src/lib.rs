@@ -24,6 +24,9 @@ pub const MAX_EXPORT_PLAYERS: usize = 512;
 pub const MAX_PING_WINDOWS_PER_PLAYER: usize = 96;
 pub const MAX_ACTIVITY_SAMPLES: usize = 576;
 
+/// `recent_events.kind` for Minecraft game allowlist join rejections.
+pub const ALLOWLIST_BOUNCE_EVENT: &str = "allowlist_bounce";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchPlanConfig {
     pub schema_version: u32,

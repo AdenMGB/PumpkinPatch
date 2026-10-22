@@ -141,6 +141,18 @@ impl EventHandler<PlayerKickEvent> for KickHandler {
                 entry.kick_count += 1;
             }
             push_event(rt, "kick", &event.player, event.reason.clone());
+            let reason_lower = event.reason.to_ascii_lowercase();
+            if reason_lower.contains("whitelist")
+                || reason_lower.contains("allowlist")
+                || reason_lower.contains("not on the whitelist")
+            {
+                push_event(
+                    rt,
+                    patch_analytics_protocol::ALLOWLIST_BOUNCE_EVENT,
+                    &event.player,
+                    event.reason.clone(),
+                );
+            }
         });
         event
     }

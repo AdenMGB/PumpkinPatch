@@ -129,6 +129,17 @@ CREATE TABLE IF NOT EXISTS plan_geolocations (
 
 CREATE INDEX IF NOT EXISTS plan_geolocations_user_index ON plan_geolocations(user_id);
 
+CREATE TABLE IF NOT EXISTS plan_allowlist_bounces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL,
+    player_uuid TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    bounce_count INTEGER NOT NULL DEFAULT 1,
+    last_bounce_ms INTEGER NOT NULL,
+    FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE,
+    UNIQUE (server_id, player_uuid)
+);
+
 CREATE TABLE IF NOT EXISTS plan_nicknames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -355,6 +366,19 @@ pub async fn ingest_payload(
     for bucket in aggregate_performance_minutes(&payload.performance_samples) {
         if upsert_minute_performance(pool, server_id, &bucket).await? {
             report.performance_samples_inserted += 1;
+        }
+    }
+
+    for ev in &payload.recent_events {
+        if ev.kind == crate::plan_allowlist::ALLOWLIST_BOUNCE_EVENT {
+            crate::plan_allowlist::record_allowlist_bounce(
+                pool,
+                server_id,
+                &ev.player_uuid,
+                &ev.player_name,
+                ev.t * 1000,
+            )
+            .await?;
         }
     }
 
