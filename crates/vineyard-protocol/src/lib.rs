@@ -1,5 +1,11 @@
 //! Zero-copy packed telemetry frames for Vineyard (plangem.md MODULE 7.2).
 
+mod voice_position;
+
+pub use voice_position::{
+    pack_voice_position, try_unpack_voice_position, VoicePositionFrame, VOICE_POSITION_MAGIC,
+};
+
 use serde::{Deserialize, Serialize};
 
 pub const MAX_HOT_CHUNKS: usize = 8;

@@ -1,4 +1,5 @@
 use super::Result;
+use crate::state::AppStateHandle;
 use serde::Serialize;
 use std::fs;
 use std::net::SocketAddr;
@@ -9,6 +10,9 @@ use tendril_voice::{
     VoicePosition,
 };
 use tokio::sync::Mutex;
+use uuid::Uuid;
+use vineyard_bus::VineyardBus;
+use vineyard_protocol::{try_unpack_voice_position, VoicePositionFrame};
 
 struct TendrilRuntime {
     stats: Arc<TendrilVoiceStats>,
@@ -35,14 +39,40 @@ pub struct TendrilVoiceFlushResult {
     pub output_dir: String,
 }
 
+fn spawn_vineyard_voice_bridge(bus: VineyardBus, engine: Arc<TendrilVoiceEngine>) {
+    tokio::spawn(async move {
+        let mut rx = bus.subscribe_voice_positions();
+        while let Ok(bytes) = rx.recv().await {
+            if let Some(frame) = try_unpack_voice_position(&bytes) {
+                let player_uuid = Uuid::from_bytes(frame.player_uuid).to_string();
+                engine.set_position(
+                    &player_uuid,
+                    VoicePosition {
+                        x: frame.x,
+                        y: frame.y,
+                        z: frame.z,
+                        dimension: frame.dimension,
+                    },
+                );
+            }
+        }
+    });
+}
+
 #[tauri::command]
-pub async fn tendril_voice_start(bind: String, proximity_blocks: Option<f64>) -> Result<String> {
+pub async fn tendril_voice_start(
+    state: tauri::State<'_, AppStateHandle>,
+    bind: String,
+    proximity_blocks: Option<f64>,
+) -> Result<String> {
+    let inner = state.get().await?;
     let addr: SocketAddr = bind
         .parse()
         .map_err(|e| patch_core::Error::InvalidState(format!("invalid bind: {e}")))?;
     let proximity = proximity_blocks.unwrap_or(tendril_voice::DEFAULT_PROXIMITY_BLOCKS);
     let stats = Arc::new(TendrilVoiceStats::default());
     let engine = TendrilVoiceEngine::new(proximity);
+    spawn_vineyard_voice_bridge(inner.vineyard_bus.clone(), engine.clone());
     {
         let mut guard = TENDRIL.lock().await;
         *guard = Some(TendrilRuntime {
@@ -57,7 +87,37 @@ pub async fn tendril_voice_start(bind: String, proximity_blocks: Option<f64>) ->
     tokio::spawn(async move {
         let _ = TendrilVoiceSfu::serve_with_engine(config, Some(stats), Some(engine)).await;
     });
-    Ok(format!("TendrilVoice SFU listening on {bind} (proximity {proximity} blocks)"))
+    Ok(format!(
+        "TendrilVoice SFU listening on {bind} (proximity {proximity} blocks); Vineyard position stream attached"
+    ))
+}
+
+/// Publish a player position on the Vineyard bus (Gourd backends / Pumpkin hook → SFU).
+#[tauri::command]
+pub async fn vineyard_publish_voice_position(
+    state: tauri::State<'_, AppStateHandle>,
+    player_uuid: String,
+    x: f64,
+    y: f64,
+    z: f64,
+    dimension: String,
+    yaw: Option<f32>,
+    pitch: Option<f32>,
+) -> Result<()> {
+    let inner = state.get().await?;
+    let id = Uuid::parse_str(&player_uuid)
+        .map_err(|e| patch_core::Error::InvalidState(format!("invalid uuid: {e}")))?;
+    let frame = VoicePositionFrame {
+        player_uuid: *id.as_bytes(),
+        x,
+        y,
+        z,
+        yaw: yaw.unwrap_or(0.0),
+        pitch: pitch.unwrap_or(0.0),
+        dimension,
+    };
+    inner.vineyard_bus.publish_voice_position_best_effort(&frame);
+    Ok(())
 }
 
 #[tauri::command]
@@ -94,25 +154,36 @@ pub async fn tendril_voice_list_peers() -> Result<Vec<VoicePeerInfo>> {
 
 #[tauri::command]
 pub async fn tendril_voice_set_position(
+    state: tauri::State<'_, AppStateHandle>,
     player_uuid: String,
     x: f64,
     y: f64,
     z: f64,
     dimension: String,
 ) -> Result<()> {
+    vineyard_publish_voice_position(
+        state,
+        player_uuid.clone(),
+        x,
+        y,
+        z,
+        dimension.clone(),
+        None,
+        None,
+    )
+    .await?;
     let guard = TENDRIL.lock().await;
-    let Some(rt) = guard.as_ref() else {
-        return Err(patch_core::Error::InvalidState("TendrilVoice is not running".into()).into());
-    };
-    rt.engine.set_position(
-        &player_uuid,
-        VoicePosition {
-            x,
-            y,
-            z,
-            dimension,
-        },
-    );
+    if let Some(rt) = guard.as_ref() {
+        rt.engine.set_position(
+            &player_uuid,
+            VoicePosition {
+                x,
+                y,
+                z,
+                dimension,
+            },
+        );
+    }
     Ok(())
 }
 

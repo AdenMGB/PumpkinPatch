@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
-use vineyard_protocol::{pack_frame, RouteWireSpec, TickTelemetryFrame};
+use vineyard_protocol::{
+    pack_frame, pack_voice_position, RouteWireSpec, TickTelemetryFrame, VoicePositionFrame,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VineyardError {
@@ -15,6 +17,7 @@ pub enum VineyardError {
 #[derive(Clone)]
 pub struct VineyardBus {
     telemetry: broadcast::Sender<Vec<u8>>,
+    voice_positions: broadcast::Sender<Vec<u8>>,
     routes: Arc<RwLock<HashMap<Uuid, Vec<RouteWireSpec>>>>,
     server_aliases: Arc<RwLock<HashMap<Uuid, String>>>,
 }
@@ -22,11 +25,34 @@ pub struct VineyardBus {
 impl VineyardBus {
     pub fn new() -> Self {
         let (telemetry, _) = broadcast::channel(256);
+        let (voice_positions, _) = broadcast::channel(512);
         Self {
             telemetry,
+            voice_positions,
             routes: Arc::new(RwLock::new(HashMap::new())),
             server_aliases: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub fn publish_voice_position(
+        &self,
+        frame: &VoicePositionFrame,
+    ) -> Result<(), VineyardError> {
+        let bytes = pack_voice_position(frame);
+        self.voice_positions
+            .send(bytes)
+            .map_err(|_| VineyardError::NoSubscribers)?;
+        Ok(())
+    }
+
+    /// Subscribe to player voice coordinates (may send with zero subscribers).
+    pub fn publish_voice_position_best_effort(&self, frame: &VoicePositionFrame) {
+        let bytes = pack_voice_position(frame);
+        let _ = self.voice_positions.send(bytes);
+    }
+
+    pub fn subscribe_voice_positions(&self) -> broadcast::Receiver<Vec<u8>> {
+        self.voice_positions.subscribe()
     }
 
     pub async fn register_server(&self, server_id: Uuid, alias: String) {

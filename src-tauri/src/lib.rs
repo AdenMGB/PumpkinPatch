@@ -116,6 +116,7 @@ pub fn run() {
             api::voice::tendril_voice_list_peers,
             api::voice::tendril_voice_set_position,
             api::voice::tendril_voice_flush_report,
+            api::voice::vineyard_publish_voice_position,
             api::telemetry::subscribe_live_telemetry,
             api::plugins_resolve::plugins_resolve_install_order,
         ])

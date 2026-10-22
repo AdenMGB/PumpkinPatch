@@ -71,7 +71,7 @@ onUnmounted(() => {
       <h1 class="page__title">TendrilVoice</h1>
       <p class="page__lead">
         Spatial UDP SFU for network <code>{{ networkId }}</code> — rolling 60s Opus evidence per speaker
-        (plangem §5.1). Gourd can terminate the client socket; positions drive proximity fan-out.
+        (plangem §5.1). Gourd backends publish `VP` Vineyard position frames; the SFU subscribes on start for roaming-safe proximity.
       </p>
     </header>
 

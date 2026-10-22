@@ -163,6 +163,7 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         }
         "plan_server_time_zone" => Some(ctx.timezone_offset.clone()),
         "plan_server_time_zone_offset" => Some(ctx.timezone_offset.clone()),
+        "plan_player_name" => ctx.player_name.clone(),
         "plan_player_session_length" => {
             let active = ctx.playtime_secs.saturating_sub(ctx.afk_secs);
             Some(format_duration(active))
@@ -432,6 +433,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_sessions_playtime_day_raw%", &ctx).as_deref(),
             Some("90000")
+        );
+    }
+
+    #[test]
+    fn resolves_player_name() {
+        let ctx = PlanPlaceholderContext {
+            player_name: Some("Steve".into()),
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_player_name%", &ctx).as_deref(),
+            Some("Steve")
         );
     }
 

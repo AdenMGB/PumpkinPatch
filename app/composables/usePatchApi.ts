@@ -297,6 +297,24 @@ export function usePatchApi() {
         z,
         dimension,
       }),
+    vineyardPublishVoicePosition: (
+      playerUuid: string,
+      x: number,
+      y: number,
+      z: number,
+      dimension: string,
+      yaw?: number,
+      pitch?: number,
+    ) =>
+      invoke<void>('vineyard_publish_voice_position', {
+        playerUuid,
+        x,
+        y,
+        z,
+        dimension,
+        yaw: yaw ?? null,
+        pitch: pitch ?? null,
+      }),
     tendrilVoiceFlushReport: (playerUuid: string, outputDir?: string) =>
       invoke<import('~/types/patch').TendrilVoiceFlushResult>('tendril_voice_flush_report', {
         playerUuid,
