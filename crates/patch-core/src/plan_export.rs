@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::plan_theme::plan_theme_json;
 use crate::{
     extension_data_merged, game_allowlist_bounces_v1, list_command_usages, list_join_addresses,
-    list_kills, network_overview_v1, online_overview_v1, performance_overview_v1,
+    list_kills, network_overview_v1, online_overview_v1, performance_overview_v1, plan_graph,
     player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1, ping_table_v1,
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, statistics_v1,
 };
@@ -22,11 +22,7 @@ pub async fn export_plan_static_bundle(
 ) -> Result<()> {
     std::fs::create_dir_all(export_dir)?;
     let write = |name: &str, value: serde_json::Value| -> Result<()> {
-        let path = export_dir.join(name);
-        let tmp = path.with_extension("part");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&value)?)?;
-        std::fs::rename(tmp, path)?;
-        Ok(())
+        write_json_atomic(&export_dir.join(name), &value)
     };
 
     write(
@@ -78,36 +74,166 @@ pub async fn export_plan_static_bundle(
         json!(network_overview_v1(pool, network_id, network_servers).await?),
     )?;
     write("theme-default.json", plan_theme_json("default"))?;
-    export_plan_react_static_data(
-        pool,
-        network_id,
-        server_uuid,
-        export_dir,
-        live_online,
-    )
-    .await?;
+    export_plan_react_network_data(pool, network_id, export_dir).await?;
+    export_plan_react_server_data(pool, network_id, server_uuid, export_dir, live_online)
+        .await?;
+    export_plan_react_graph_data(pool, network_id, export_dir, Some(server_uuid)).await?;
+    export_plan_react_graph_data(pool, network_id, export_dir, None).await?;
     write_plan_export_index(export_dir)?;
     write_plan_export_static_assets(export_dir)?;
     Ok(())
 }
 
-/// Pre-rendered `/data/*.json` files for Plan React static export mode (indepth.md §6.2).
-pub async fn export_plan_react_static_data(
+/// Full-network static export: every server's `/data` snapshots plus shared network files.
+pub async fn export_plan_network_static_sync(
+    pool: &SqlitePool,
+    network_id: &str,
+    export_dir: &Path,
+    server_online: &[(String, u32)],
+    network_servers: &[(String, String, u32)],
+    primary_server_uuid: &str,
+    primary_live_online: u32,
+) -> Result<()> {
+    std::fs::create_dir_all(export_dir)?;
+    let write_root = |name: &str, value: serde_json::Value| -> Result<()> {
+        write_json_atomic(&export_dir.join(name), &value)
+    };
+    write_root(
+        "networkOverview.json",
+        json!(network_overview_v1(pool, network_id, network_servers).await?),
+    )?;
+    write_root("theme-default.json", plan_theme_json("default"))?;
+    export_plan_react_network_data(pool, network_id, export_dir).await?;
+    for (uuid, online) in server_online {
+        export_plan_react_server_data(pool, network_id, uuid, export_dir, *online).await?;
+        export_plan_react_graph_data(pool, network_id, export_dir, Some(uuid)).await?;
+    }
+    export_plan_react_graph_data(pool, network_id, export_dir, None).await?;
+    write_root(
+        "serverOverview.json",
+        json!(
+            server_overview_v1(pool, network_id, primary_server_uuid, primary_live_online)
+                .await?
+        ),
+    )?;
+    write_root(
+        "onlineOverview.json",
+        json!(
+            online_overview_v1(
+                pool,
+                network_id,
+                Some(primary_server_uuid),
+                primary_live_online,
+            )
+            .await?
+        ),
+    )?;
+    write_plan_export_index(export_dir)?;
+    write_plan_export_static_assets(export_dir)?;
+    Ok(())
+}
+
+fn write_json_atomic(path: &Path, value: &serde_json::Value) -> Result<()> {
+    let tmp = path.with_extension("part");
+    std::fs::write(&tmp, serde_json::to_string_pretty(value)?)?;
+    std::fs::rename(tmp, path)?;
+    Ok(())
+}
+
+fn write_react_data(export_dir: &Path, name: &str, value: serde_json::Value) -> Result<()> {
+    let data_dir = export_dir.join("data");
+    std::fs::create_dir_all(&data_dir)?;
+    write_json_atomic(&data_dir.join(name), &value)
+}
+
+const REACT_GRAPH_TYPES: &[(&str, &str)] = &[
+    ("playersOnline", "graph-playersOnline"),
+    ("activity", "graph-activity"),
+    ("uniqueAndNew", "graph-uniqueAndNew"),
+    ("hourlyUniqueAndNew", "graph-hourlyUniqueAndNew"),
+    ("serverCalendar", "graph-serverCalendar"),
+    ("punchCard", "graph-punchCard"),
+    ("geolocation", "graph-geolocation"),
+    ("optimizedPerformance", "graph-optimizedPerformance"),
+    ("aggregatedPing", "graph-aggregatedPing"),
+];
+
+/// Graph JSON files consumed by Plan React static mode (`/data/graph-*.json`).
+pub async fn export_plan_react_graph_data(
+    pool: &SqlitePool,
+    network_id: &str,
+    export_dir: &Path,
+    server_uuid: Option<&str>,
+) -> Result<()> {
+    for (graph_type, file_prefix) in REACT_GRAPH_TYPES {
+        let value = plan_graph(pool, network_id, server_uuid, graph_type).await?;
+        let name = match server_uuid {
+            Some(uuid) => format!("{}_{}.json", file_prefix, uuid),
+            None => format!("{}.json", file_prefix),
+        };
+        write_react_data(export_dir, &name, value)?;
+    }
+    if server_uuid.is_none() {
+        let proxies = plan_graph(pool, network_id, None, "playersOnlineProxies").await?;
+        write_react_data(export_dir, "graph-playersOnlineProxies.json", proxies)?;
+    }
+    Ok(())
+}
+
+/// Network-scoped `/data/*.json` (written once per export run).
+pub async fn export_plan_react_network_data(
+    pool: &SqlitePool,
+    network_id: &str,
+    export_dir: &Path,
+) -> Result<()> {
+    write_react_data(
+        export_dir,
+        "playersTable.json",
+        json!(players_table_v1(pool, network_id, None, 500).await?),
+    )?;
+    write_react_data(
+        export_dir,
+        "retention.json",
+        json!(retention_v1(pool, network_id, None, 500).await?),
+    )?;
+    write_react_data(
+        export_dir,
+        "joinAddresses.json",
+        json!({
+            "join_addresses": list_join_addresses(pool, network_id, None).await?
+        }),
+    )?;
+    write_react_data(
+        export_dir,
+        "network-playerbaseOverview.json",
+        json!(playerbase_overview_v1(pool, network_id, None).await?),
+    )?;
+    write_react_data(
+        export_dir,
+        "network-pingTable.json",
+        json!(ping_table_v1(pool, network_id, None).await?),
+    )?;
+    write_react_data(
+        export_dir,
+        "statistics-.json",
+        json!(statistics_v1(pool, network_id, None, false).await?),
+    )?;
+    write_react_data(
+        export_dir,
+        "statistics--aggregate.json",
+        json!(statistics_v1(pool, network_id, None, true).await?),
+    )?;
+    Ok(())
+}
+
+/// Server-scoped `/data/*-{uuid}.json` snapshots.
+pub async fn export_plan_react_server_data(
     pool: &SqlitePool,
     network_id: &str,
     server_uuid: &str,
     export_dir: &Path,
     live_online: u32,
 ) -> Result<()> {
-    let data_dir = export_dir.join("data");
-    std::fs::create_dir_all(&data_dir)?;
-    let write = |name: &str, value: serde_json::Value| -> Result<()> {
-        let path = data_dir.join(name);
-        let tmp = path.with_extension("part");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&value)?)?;
-        std::fs::rename(tmp, path)?;
-        Ok(())
-    };
 
     let server_row = sqlx::query_as::<_, (String, String)>(
         "SELECT uuid, name FROM plan_servers WHERE network_id = ? AND uuid = ? LIMIT 1",
@@ -121,7 +247,8 @@ pub async fn export_plan_react_static_data(
         .map(|(u, n)| (u, n))
         .unwrap_or_else(|| (server_uuid.to_string(), server_uuid.to_string()));
 
-    write(
+    write_react_data(
+        export_dir,
         &format!("serverIdentity-{}.json", srv_uuid),
         json!({
             "serverName": server_name,
@@ -131,51 +258,62 @@ pub async fn export_plan_react_static_data(
     )?;
 
     let online = online_overview_v1(pool, network_id, Some(&srv_uuid), live_online).await?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("onlineInsights-{}.json", srv_uuid),
         json!({ "insights": online.insights }),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("playerbaseOverview-{}.json", srv_uuid),
         json!(playerbase_overview_v1(pool, network_id, Some(&srv_uuid)).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("playerVersus-{}.json", srv_uuid),
         json!(player_versus_v1(pool, network_id, Some(&srv_uuid)).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("extensionData-{}.json", srv_uuid),
         json!(extension_data_merged(pool, network_id).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("kills-{}.json", srv_uuid),
         json!({
             "player_kills": list_kills(pool, network_id, Some(&srv_uuid), 500).await?
         }),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("playersTable-{}.json", srv_uuid),
         json!(players_table_v1(pool, network_id, Some(&srv_uuid), 500).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("gameAllowlistBounces-{}.json", srv_uuid),
         json!(game_allowlist_bounces_v1(pool, network_id, Some(&srv_uuid)).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("pingTable-{}.json", srv_uuid),
         json!(ping_table_v1(pool, network_id, Some(&srv_uuid)).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("retention-{}.json", srv_uuid),
         json!(retention_v1(pool, network_id, Some(&srv_uuid), 500).await?),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("joinAddresses-{}.json", srv_uuid),
         json!({
             "join_addresses": list_join_addresses(pool, network_id, Some(&srv_uuid)).await?
         }),
     )?;
-    write(
+    write_react_data(
+        export_dir,
         &format!("statistics-{}.json", srv_uuid),
         json!(statistics_v1(pool, network_id, Some(&srv_uuid), false).await?),
     )?;
@@ -191,42 +329,26 @@ pub async fn export_plan_react_static_data(
             })
         })
         .collect::<Vec<_>>();
-    write(
+    write_react_data(
+        export_dir,
         &format!("pluginHistory-{}.json", srv_uuid),
         json!({ "history": history }),
     )?;
 
-    write(
-        "playersTable.json",
-        json!(players_table_v1(pool, network_id, None, 500).await?),
-    )?;
-    write(
-        "retention.json",
-        json!(retention_v1(pool, network_id, None, 500).await?),
-    )?;
-    write(
-        "joinAddresses.json",
-        json!({
-            "join_addresses": list_join_addresses(pool, network_id, None).await?
-        }),
-    )?;
-    write(
-        "network-playerbaseOverview.json",
-        json!(playerbase_overview_v1(pool, network_id, None).await?),
-    )?;
-    write(
-        "network-pingTable.json",
-        json!(ping_table_v1(pool, network_id, None).await?),
-    )?;
-    write(
-        "statistics-.json",
-        json!(statistics_v1(pool, network_id, None, false).await?),
-    )?;
-    write(
-        "statistics--aggregate.json",
-        json!(statistics_v1(pool, network_id, None, true).await?),
-    )?;
+    Ok(())
+}
 
+/// Pre-rendered `/data/*.json` for one server plus shared network files (Tauri single-server export).
+pub async fn export_plan_react_static_data(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuid: &str,
+    export_dir: &Path,
+    live_online: u32,
+) -> Result<()> {
+    export_plan_react_network_data(pool, network_id, export_dir).await?;
+    export_plan_react_server_data(pool, network_id, server_uuid, export_dir, live_online)
+        .await?;
     Ok(())
 }
 
@@ -341,6 +463,31 @@ mod export_tests {
         assert!(players.is_file());
         let network_ret = dir.path().join("data/retention.json");
         assert!(network_ret.is_file());
+    }
+
+    #[tokio::test]
+    async fn react_graph_snapshots_written_for_server_and_network() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        ensure_plan_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO plan_servers (network_id, uuid, name, is_installed) VALUES ('net', 'srv-a', 'A', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        export_plan_react_graph_data(&pool, "net", dir.path(), Some("srv-a"))
+            .await
+            .unwrap();
+        export_plan_react_graph_data(&pool, "net", dir.path(), None)
+            .await
+            .unwrap();
+        assert!(dir.path().join("data/graph-activity_srv-a.json").is_file());
+        assert!(dir.path().join("data/graph-activity.json").is_file());
+        assert!(dir
+            .path()
+            .join("data/graph-playersOnlineProxies.json")
+            .is_file());
     }
 }
 

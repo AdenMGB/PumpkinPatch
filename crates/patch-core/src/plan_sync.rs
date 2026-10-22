@@ -2,7 +2,7 @@ use crate::analytics::read_server_analytics;
 use crate::db::Database;
 use crate::error::Result;
 use crate::models::{NetworkRecord, ServerRecord};
-use crate::plan_export::{default_export_dir, export_plan_static_bundle};
+use crate::plan_export::{default_export_dir, export_plan_network_static_sync};
 use crate::plan_store::{ingest_payload, PlanSyncReport};
 use sqlx::Row;
 use std::path::Path;
@@ -60,6 +60,11 @@ pub async fn sync_network_plan_exports(
             .iter()
             .map(|s| (s.server_id.clone(), s.server_name.clone(), s.online_now))
             .collect();
+        let server_online: Vec<(String, u32)> = overview
+            .servers
+            .iter()
+            .map(|s| (s.server_id.clone(), s.online_now))
+            .collect();
         let primary = &servers[0];
         let live_online = overview
             .servers
@@ -68,13 +73,14 @@ pub async fn sync_network_plan_exports(
             .map(|s| s.online_now)
             .unwrap_or(0);
         let dir = default_export_dir(Path::new(&network.data_path));
-        let _ = export_plan_static_bundle(
+        let _ = export_plan_network_static_sync(
             pool,
             &network.id.to_string(),
-            &primary.id.to_string(),
             &dir,
-            live_online,
+            &server_online,
             &triples,
+            &primary.id.to_string(),
+            live_online,
         )
         .await;
     }
