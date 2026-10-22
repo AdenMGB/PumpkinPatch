@@ -138,8 +138,9 @@ async function copyCommand(cmd: string) {
       <PpCard v-if="backendServers.length" padding="lg" class="switch-card">
         <h2 class="section-title">Switch game servers</h2>
         <p class="pp-muted section-hint">
-          Join via the hub, then in chat run Velocity&apos;s
-          <code class="pp-code">/server &lt;name&gt;</code> (names match the table below).
+          In the lobby use <code class="pp-code">/patchjoin &lt;name&gt;</code> (from the hub
+          plugin), or Velocity&apos;s <code class="pp-code">/server &lt;name&gt;</code> — names
+          match the table below.
         </p>
         <ul class="switch-list">
           <li v-for="s in backendServers" :key="s.id" class="switch-row">
@@ -184,11 +185,14 @@ async function copyCommand(cmd: string) {
           </li>
         </ul>
 
+        <p v-if="network.status === 'running'" class="pp-muted add-hint">
+          Stop the network before adding backends so Velocity can reload its server list.
+        </p>
         <div class="add-backend">
           <PpInput v-model="newBackendName" label="New backend" placeholder="minigames" />
           <PpButton
             variant="secondary"
-            :disabled="!newBackendName.trim()"
+            :disabled="!newBackendName.trim() || network.status === 'running'"
             :loading="addBackendMutation.isPending.value"
             @click="addBackendMutation.mutate()"
           >
@@ -267,6 +271,10 @@ async function copyCommand(cmd: string) {
   display: flex;
   gap: 0.35rem;
   align-items: center;
+}
+.add-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
 }
 .add-backend {
   display: flex;

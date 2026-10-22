@@ -2,8 +2,20 @@
 
 mod analytics;
 mod db;
+mod plan_graph;
+mod plan_json_cache;
+mod plan_overviews;
+mod plan_perf;
+mod plan_query;
+mod plan_store;
+mod plan_sync;
+mod plan_extension;
+mod plan_v1;
 mod error;
+mod hub_lobby;
 mod hub_settings;
+mod log_store;
+mod ports;
 mod instance_config;
 mod instance_plugins;
 mod java;
@@ -26,9 +38,41 @@ pub use analytics::{
     aggregate_network_analytics, generate_export_secret, read_server_analytics,
     write_patch_plan_config, NetworkAnalyticsOverview, ServerAnalyticsSnapshot,
 };
+pub use plan_store::{
+    graph_players_online, list_command_usages, list_kills, list_players_table, list_sessions,
+    list_join_addresses, network_overview_v1, ping_table_v1, player_profile_v1, player_versus_v1,
+    server_overview_v1, sessions_overview_v1, PlanJoinAddressRow, PlanSessionsOverviewV1,
+    PlanCommandUsageRow, PlanGraphPlayersOnline, PlanKillRow, PlanNetworkOverviewV1, PlanPingTableRow,
+    PlanPlayerConnectionRow, PlanPlayerNicknameRow, PlanPlayerProfileStats, PlanPlayerProfileV1,
+    PlanPlayerPunchcardPoint, PlanPlayerTableRow, PlanPlayerVersusV1, PlanPlayerWorldSlice,
+    PlanServerOverviewV1,
+    PlanSessionRow, PlanSyncReport,
+};
+pub use plan_graph::plan_graph;
+pub use plan_json_cache::{PlanJsonCache, REFRESH_BARRIER_MS, with_plan_cache};
+pub use plan_query::{
+    execute_plan_query, load_cached_plan_query, plan_filters_catalog, PlanFilterTypeInfo,
+    PlanFiltersCatalog, PlanQueryCohortView, PlanQueryRequest, PlanQueryResult,
+};
+pub use plan_extension::{
+    extension_data_v1, PlanExtensionDataV1, PlanExtensionPlugin, PlanExtensionTab,
+};
+pub use plan_v1::{
+    players_table_v1, players_v1, sessions_v1, PlanExtensionColumn, PlanPlayerV1Entry,
+    PlanPlayersTableV1, PlanPlayersV1, PlanSessionsV1,
+};
+pub use plan_overviews::{
+    online_overview_v1, performance_overview_v1, playerbase_overview_v1, retention_v1,
+    PlanOnlineOverviewV1, PlanPerformanceOverviewV1, PlanPlayerbaseOverviewV1, PlanRetentionPlayerRow,
+    PlanRetentionV1,
+};
+pub use plan_sync::sync_network_plan_exports;
 pub use db::Database;
 pub use error::{Error, Result};
+pub use hub_lobby::{ensure_hub_lobby_config_for_lobby, parse_bind_host, write_hub_servers_config};
 pub use hub_settings::{read_hub_settings, write_hub_settings, HubSettings, HubSettingsPatch};
+pub use log_store::{append_log_line, read_log_tail, clear_logs};
+pub use ports::{ensure_ports_available, is_tcp_port_available};
 pub use instance_config::{
     rcon_password_for_server, rcon_port_for_game_port, sync_server_instance_config,
 };
@@ -51,8 +95,8 @@ pub use plugins::{
 };
 pub use process::{LogLine, ProcessSupervisor};
 pub use pumpkin_market::{
-    PumpkinMarketClient, PumpkinMarketListResult, PumpkinMarketPluginDetail,
-    PumpkinMarketPluginSummary,
+    PumpkinMarketClient, PumpkinMarketListResult, PumpkinMarketPluginCommand,
+    PumpkinMarketPluginDetail, PumpkinMarketPluginSummary, PumpkinMarketPluginVersion,
 };
 pub use releases::{DownloadProgress, ReleaseService};
 pub use state::{AppDirs, AppState};

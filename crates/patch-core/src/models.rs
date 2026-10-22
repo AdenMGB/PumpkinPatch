@@ -6,21 +6,18 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum HubType {
     Velocity,
-    Vine,
 }
 
 impl HubType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Velocity => "velocity",
-            Self::Vine => "vine",
         }
     }
 
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "velocity" => Some(Self::Velocity),
-            "vine" => Some(Self::Vine),
             _ => None,
         }
     }

@@ -107,8 +107,12 @@ pub fn deploy_auto_plugins_for_server(
     cache_dir: &Path,
 ) -> Result<Vec<PathBuf>> {
     let mut deployed = Vec::new();
+    let role = server.role.as_str();
     for entry in &manifest.plugins {
         if !entry.auto_deploy {
+            continue;
+        }
+        if !entry.targets.is_empty() && !entry.targets.iter().any(|t| t == role) {
             continue;
         }
         let dest = deploy_plugin(
@@ -116,7 +120,7 @@ pub fn deploy_auto_plugins_for_server(
             entry,
             instance_path,
             cache_dir,
-            Some(server.role.as_str()),
+            Some(role),
         )?;
         deployed.push(dest);
     }

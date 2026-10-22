@@ -1,6 +1,8 @@
 use crate::analytics::generate_export_secret;
 use crate::db::Database;
 use crate::error::{Error, Result};
+use crate::hub_lobby::ensure_hub_lobby_config_for_lobby;
+use crate::ports::ensure_ports_available;
 use crate::models::{
     CreateNetworkRequest, HubType, JoinInfo, NetworkRecord, NetworkRuntimeStatus, NetworkSummary,
     ServerRecord, ServerRole,
@@ -8,7 +10,7 @@ use crate::models::{
 use crate::releases::ReleaseService;
 use crate::state::AppDirs;
 use chrono::Utc;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Velocity connects to Pumpkin backends on loopback; public `bind_host` is only for the proxy listen socket.
@@ -44,6 +46,17 @@ impl NetworkOrchestrator {
         }
         let network_id = Uuid::new_v4();
         let hub_port = req.hub_port.unwrap_or(25565);
+        let bind_host = settings.bind_host.as_str();
+        let lobby_port = allocate_port(hub_port, 1);
+        let backend_ports: Vec<u16> = req
+            .backend_names
+            .iter()
+            .enumerate()
+            .map(|(idx, _)| allocate_port(hub_port, 2 + idx as u16))
+            .collect();
+        let mut ports_to_check = vec![hub_port, lobby_port];
+        ports_to_check.extend(backend_ports);
+        ensure_ports_available(bind_host, &ports_to_check)?;
         let channel = req
             .pumpkin_channel
             .unwrap_or_else(|| settings.pumpkin_channel_default.clone());
@@ -57,7 +70,6 @@ impl NetworkOrchestrator {
         std::fs::create_dir_all(&hub_path)?;
 
         let lobby_id = Uuid::new_v4();
-        let lobby_port = allocate_port(hub_port, 1);
         let lobby_path = network_path.join("lobby");
         std::fs::create_dir_all(&lobby_path)?;
         self.write_instance_proxy_config(&lobby_path, &forwarding_secret, lobby_port)?;
@@ -123,6 +135,13 @@ impl NetworkOrchestrator {
             db.insert_server(server).await?;
         }
 
+        if let Some(lobby) = servers.iter().find(|s| s.role == ServerRole::Lobby.as_str()) {
+            ensure_hub_lobby_config_for_lobby(
+                std::path::Path::new(&lobby.data_path),
+                &servers,
+            )?;
+        }
+
         Ok(NetworkSummary {
             network,
             servers,
@@ -184,7 +203,8 @@ compression-level = -1
 login-ratelimit = 3000
 
 [query]
-enabled = false
+enabled = true
+motd = "<#e67e22>Pumpkin Patch <white>Network"
 "#,
             bind_host = bind_host,
             hub_port = hub_port,
@@ -232,17 +252,34 @@ enabled = false
         &self,
         servers: &[ServerRecord],
         progress: Option<tokio::sync::mpsc::Sender<crate::releases::DownloadProgress>>,
-    ) -> Result<(PathBuf, PathBuf)> {
-        let channel = servers
+        plugins_root: Option<&Path>,
+    ) -> Result<(std::collections::HashMap<String, PathBuf>, PathBuf)> {
+        use std::collections::HashMap;
+        let mut pumpkins = HashMap::new();
+        let channels: Vec<String> = servers
+            .iter()
+            .map(|s| s.pumpkin_channel.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        let default_channel = servers
             .first()
             .map(|s| s.pumpkin_channel.clone())
             .unwrap_or_else(|| "nightly".into());
-        let pumpkin = self
-            .releases
-            .ensure_pumpkin_binary(&channel, progress.clone())
-            .await?;
+        let channel_list = if channels.is_empty() {
+            vec![default_channel]
+        } else {
+            channels
+        };
+        for channel in channel_list {
+            let path = self
+                .releases
+                .ensure_pumpkin_binary(&channel, progress.clone(), plugins_root)
+                .await?;
+            pumpkins.insert(channel, path);
+        }
         let velocity = self.releases.ensure_velocity_jar(progress).await?;
-        Ok((pumpkin, velocity))
+        Ok((pumpkins, velocity))
     }
 
     pub async fn add_backend(
@@ -285,6 +322,12 @@ enabled = false
         };
         db.insert_server(&backend).await?;
         let all = db.list_servers_for_network(network.id).await?;
+        if let Some(lobby) = all.iter().find(|s| s.role == ServerRole::Lobby.as_str()) {
+            ensure_hub_lobby_config_for_lobby(
+                std::path::Path::new(&lobby.data_path),
+                &all,
+            )?;
+        }
         let hub_path = PathBuf::from(&network.data_path).join("hub");
         self.write_velocity_toml(
             &hub_path,

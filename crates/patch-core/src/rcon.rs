@@ -68,14 +68,30 @@ pub async fn send_rcon_command(host: &str, port: u16, password: &str, command: &
     let cmd_packet = encode_packet(2, COMMAND_TYPE, command);
     stream.write_all(&cmd_packet).await?;
 
+    // Pumpkin may send multiple OUTPUT packets without a final empty terminator (Source RCON
+    // usually ends with an empty packet). Use a short idle timeout after the first chunk.
     let mut output = String::new();
-    while let Ok((id, ty, body)) = read_one_packet(&mut stream, &mut buffer).await {
-        if id != 2 || ty != RESPONSE_TYPE {
-            break;
-        }
-        output.push_str(&body);
-        if body.is_empty() {
-            break;
+    let mut saw_response = false;
+    loop {
+        let wait = if saw_response {
+            Duration::from_millis(250)
+        } else {
+            Duration::from_secs(30)
+        };
+        let next = timeout(wait, read_one_packet(&mut stream, &mut buffer)).await;
+        match next {
+            Err(_) => break,
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok((id, ty, body))) => {
+                if id != 2 || ty != RESPONSE_TYPE {
+                    break;
+                }
+                saw_response = true;
+                output.push_str(&body);
+                if body.is_empty() {
+                    break;
+                }
+            }
         }
     }
     Ok(output.trim().to_string())

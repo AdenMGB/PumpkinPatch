@@ -2,10 +2,10 @@ use super::Result;
 use crate::bundled_plugins::provision_server_plugin;
 use crate::state::AppStateHandle;
 use patch_core::{
-    list_installed_plugins, read_hub_settings, read_server_settings, remove_installed_plugin,
-    write_hub_settings, write_server_settings, AddBackendRequest, HubSettings, HubSettingsPatch,
-    InstalledPlugin, ServerRecord, ServerSettings, UpdateHubSettingsRequest,
-    UpdateServerSettingsRequest,
+    list_installed_plugins, parse_bind_host, read_hub_settings, read_server_settings,
+    remove_installed_plugin, write_hub_settings, write_server_settings, AddBackendRequest,
+    HubSettings, HubSettingsPatch, InstalledPlugin, ServerRecord, ServerSettings,
+    UpdateHubSettingsRequest, UpdateServerSettingsRequest,
 };
 use uuid::Uuid;
 
@@ -29,6 +29,7 @@ pub async fn hub_update_settings(
     let inner = state.get().await?;
     let network = inner.db.get_network(network_id).await?;
     let hub_path = std::path::Path::new(&network.data_path).join("hub");
+    let bind_for_sync = patch.bind.clone();
     let hub_patch = HubSettingsPatch {
         bind: patch.bind,
         motd: patch.motd,
@@ -36,7 +37,20 @@ pub async fn hub_update_settings(
         show_max_players: patch.show_max_players,
         player_info_forwarding: patch.player_info_forwarding,
     };
-    Ok(write_hub_settings(&hub_path, &hub_patch)?)
+    let updated = write_hub_settings(&hub_path, &hub_patch)?;
+    if let Some(bind) = &bind_for_sync {
+        if let Ok(host) = parse_bind_host(bind) {
+            let settings = inner.settings().await;
+            if settings.bind_host != host {
+                let next = patch_core::AppSettings {
+                    bind_host: host,
+                    ..settings
+                };
+                inner.update_settings(next).await?;
+            }
+        }
+    }
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -114,12 +128,33 @@ pub async fn server_set_minecraft_version(
 }
 
 #[tauri::command]
+pub async fn server_set_pumpkin_channel(
+    state: tauri::State<'_, AppStateHandle>,
+    id: Uuid,
+    pumpkin_channel: String,
+) -> Result<ServerRecord> {
+    let inner = state.get().await?;
+    let channel = pumpkin_channel.trim();
+    if channel.is_empty() {
+        return Err(patch_core::Error::InvalidState("channel cannot be empty".into()).into());
+    }
+    inner.db.update_server_pumpkin_channel(id, channel).await?;
+    inner.db.get_server(id).await.map_err(Into::into)
+}
+
+#[tauri::command]
 pub async fn server_add_backend(
     state: tauri::State<'_, AppStateHandle>,
     network_id: Uuid,
     request: AddBackendRequest,
 ) -> Result<ServerRecord> {
     let inner = state.get().await?;
+    if inner.processes.read().await.is_running(network_id) {
+        return Err(patch_core::Error::InvalidState(
+            "stop the network before adding backends (Velocity must reload server list)".into(),
+        )
+        .into());
+    }
     let network = inner.db.get_network(network_id).await?;
     let settings = inner.settings().await;
     let mc = request

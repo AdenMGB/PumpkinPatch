@@ -71,6 +71,7 @@ const catalogTab = ref<CatalogTab>('market')
           Modrinth
         </button>
       </div>
+      <BundledPluginsPanel :key="`${pluginServer.id}-bundled`" :server="pluginServer" />
       <PumpkinMarketBrowser
         v-if="catalogTab === 'market'"
         :key="`${pluginServer.id}-market`"

@@ -1,13 +1,20 @@
 use patch_analytics_protocol::{
     apply_stat_increment, ActivitySample, AnalyticsEvent, AnalyticsPayload, DeathRecord,
-    PatchPlanConfig, PlayerStats, ServerTotals, SignedExport, EXPORT_FILENAME, EXPORT_SCHEMA_VERSION,
-    MAX_ACTIVITY_SAMPLES, MAX_EXPORT_PLAYERS, MAX_RECENT_DEATHS, MAX_RECENT_EVENTS,
+    PatchPlanConfig, PerformanceSample, PingWindowRecord, PlayerStats, PvpKillRecord,
+    ServerTotals, SessionRecord, SignedExport, WorldTimeSlice, EXPORT_FILENAME,
+    EXPORT_SCHEMA_VERSION, MAX_ACTIVITY_SAMPLES, MAX_COMPLETED_SESSIONS_PER_PLAYER,
+    MAX_EXPORT_PLAYERS, MAX_PERFORMANCE_SAMPLES, MAX_PING_WINDOWS_PER_PLAYER,
+    MAX_RECENT_DEATHS, MAX_RECENT_EVENTS, MAX_RECENT_PVP_KILLS, MAX_SERVER_COMMAND_USAGE_KEYS,
     STATE_FILENAME,
 };
+use pumpkin_plugin_api::Server;
+use patch_plan_core::{AfkTracker, ActiveSession, GameMode, WorldTimes};
 use pumpkin_plugin_api::player::Player;
 use pumpkin_plugin_api::uuid;
 use pumpkin_plugin_api::Result;
 use std::collections::HashMap;
+use patch_plan_core::normalize_join_address;
+use patch_plan_core::JoinAddressOptions;
 use std::sync::{Mutex, OnceLock};
 
 pub static RUNTIME: OnceLock<Mutex<RuntimeState>> = OnceLock::new();
@@ -24,6 +31,9 @@ where
 pub struct RuntimeState {
     pub config: PatchPlanConfig,
     pub players: HashMap<String, PlayerStats>,
+    pub active_sessions: HashMap<String, ActiveSession>,
+    pub afk_tracker: AfkTracker,
+    pub command_usages: HashMap<String, u64>,
     pub total_joins: u64,
     pub total_logins: u64,
     pub total_kicks: u64,
@@ -31,7 +41,50 @@ pub struct RuntimeState {
     pub activity_samples: Vec<ActivitySample>,
     pub recent_deaths: Vec<DeathRecord>,
     pub recent_events: Vec<AnalyticsEvent>,
+    pub recent_pvp_kills: Vec<PvpKillRecord>,
+    pub performance_samples: Vec<PerformanceSample>,
+    pub last_perf_instant: Option<std::time::Instant>,
     pub data_folder: String,
+    pub pending_geolocation: HashMap<String, String>,
+    pub online_ping: HashMap<String, OnlinePingTrack>,
+    pub server_enabled_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct OnlinePingTrack {
+    pub joined_at: i64,
+    pub samples: Vec<u32>,
+}
+
+const PING_JOIN_DELAY_SECS: i64 = 30;
+const PING_SERVER_ENABLE_DELAY_SECS: i64 = 300;
+const PING_SAMPLES_PER_WINDOW: usize = 30;
+
+/// Samples TPS from wall-clock between 100-tick plugin callbacks.
+pub fn sample_performance(rt: &mut RuntimeState, online: u32, tick_period: f64) {
+    let now = std::time::Instant::now();
+    if let Some(prev) = rt.last_perf_instant {
+        let elapsed = now.duration_since(prev).as_secs_f64();
+        if elapsed >= 0.25 {
+            let tps = (tick_period / elapsed).clamp(0.0, 20.0);
+            let mspt = if tps > 0.1 {
+                1000.0 / tps
+            } else {
+                1000.0
+            };
+            rt.performance_samples.push(PerformanceSample {
+                t: unix_now(),
+                ticks_per_second: tps,
+                mspt_avg: mspt,
+                players_online: online,
+            });
+            if rt.performance_samples.len() > MAX_PERFORMANCE_SAMPLES {
+                let drain = rt.performance_samples.len() - MAX_PERFORMANCE_SAMPLES;
+                rt.performance_samples.drain(0..drain);
+            }
+        }
+    }
+    rt.last_perf_instant = Some(now);
 }
 
 pub fn unix_now() -> i64 {
@@ -43,6 +96,116 @@ pub fn unix_now() -> i64 {
 
 pub fn player_id(player: &Player) -> String {
     uuid::to_string(player.get_id())
+}
+
+pub fn note_prelogin_geolocation(rt: &mut RuntimeState, player_uuid: &str, ip_address: &str) {
+    let geo = patch_plan_core::geolocation_from_ip(ip_address);
+    if !geo.is_empty() {
+        rt.pending_geolocation
+            .insert(player_uuid.to_string(), geo);
+    }
+}
+
+pub fn apply_player_identity(rt: &mut RuntimeState, player: &Player, now: i64) {
+    let id = player_id(player);
+    let geo = rt.pending_geolocation.remove(&id);
+    let entry = touch_player(rt, player, now);
+    if let Some(geo) = geo {
+        entry.geolocation = geo;
+    }
+    let nick = player.get_display_name().get_text();
+    if !nick.is_empty() && nick != entry.name {
+        entry.nick = nick.chars().take(36).collect();
+    }
+}
+
+pub fn register_online_ping(rt: &mut RuntimeState, player_uuid: &str, now: i64) {
+    rt.online_ping.insert(
+        player_uuid.to_string(),
+        OnlinePingTrack {
+            joined_at: now,
+            samples: Vec::new(),
+        },
+    );
+}
+
+pub fn unregister_online_ping(rt: &mut RuntimeState, player_uuid: &str) {
+    if let Some(track) = rt.online_ping.remove(player_uuid) {
+        flush_ping_track(rt, player_uuid, &track, unix_now());
+    }
+}
+
+fn flush_ping_track(rt: &mut RuntimeState, player_uuid: &str, track: &OnlinePingTrack, now: i64) {
+    if track.samples.is_empty() {
+        return;
+    }
+    let min = *track.samples.iter().min().unwrap_or(&0);
+    let max = *track.samples.iter().max().unwrap_or(&0);
+    let avg = (track.samples.iter().map(|v| *v as u64).sum::<u64>()
+        / track.samples.len().max(1) as u64) as u32;
+    let window = PingWindowRecord {
+        t_unix: now,
+        avg_ping: avg,
+        min_ping: min,
+        max_ping: max,
+    };
+    if let Some(entry) = rt.players.get_mut(player_uuid) {
+        entry.ping_windows.push(window);
+        if entry.ping_windows.len() > MAX_PING_WINDOWS_PER_PLAYER {
+            let extra = entry.ping_windows.len() - MAX_PING_WINDOWS_PER_PLAYER;
+            entry.ping_windows.drain(0..extra);
+        }
+    }
+}
+
+pub fn sample_online_pings(rt: &mut RuntimeState, server: &Server) {
+    let now = unix_now();
+    if now - rt.server_enabled_at < PING_SERVER_ENABLE_DELAY_SECS {
+        return;
+    }
+    let ids: Vec<String> = rt.online_ping.keys().cloned().collect();
+    for id in ids {
+        let Some(track) = rt.online_ping.get(&id) else {
+            continue;
+        };
+        if now - track.joined_at < PING_JOIN_DELAY_SECS {
+            continue;
+        }
+        let parsed = uuid::parse(&id);
+        if parsed.is_none() {
+            continue;
+        }
+        let player = server.get_player_by_uuid(parsed.unwrap());
+        if player.is_none() {
+            continue;
+        }
+        let player = player.unwrap();
+        let ping = player.get_ping();
+        let mut flush = false;
+        if let Some(track) = rt.online_ping.get_mut(&id) {
+            if ping > 0 {
+                track.samples.push(ping);
+            }
+            if track.samples.len() >= PING_SAMPLES_PER_WINDOW {
+                flush = true;
+            }
+        }
+        if flush {
+            let track = rt.online_ping.remove(&id).unwrap();
+            flush_ping_track(rt, &id, &track, now);
+            rt.online_ping.insert(
+                id,
+                OnlinePingTrack {
+                    joined_at: track.joined_at,
+                    samples: Vec::new(),
+                },
+            );
+        }
+    }
+}
+
+pub fn resolve_join_address(rt: &RuntimeState, _player: &Player) -> String {
+    rt.config.default_join_address.clone()
 }
 
 pub fn touch_player<'a>(
@@ -104,8 +267,213 @@ pub fn push_sample(rt: &mut RuntimeState, t: i64, online: u32) {
 
 pub fn record_stat(rt: &mut RuntimeState, player: &Player, stat_id: &str, amount: i32) {
     let now = unix_now();
+    let id = player_id(player);
+    let before_pk = rt.players.get(&id).map(|p| p.player_kills).unwrap_or(0);
+    let before_mk = rt.players.get(&id).map(|p| p.mob_kills).unwrap_or(0);
+    {
+        let entry = touch_player(rt, player, now);
+        apply_stat_increment(entry, stat_id, amount);
+    }
+    session_activity(rt, player, now);
+
+    let after_pk = rt.players.get(&id).map(|p| p.player_kills).unwrap_or(0);
+    let after_mk = rt.players.get(&id).map(|p| p.mob_kills).unwrap_or(0);
+    let player_name = player.get_name();
+    let weapon = stat_weapon_label(stat_id);
+
+    if after_mk > before_mk {
+        let delta = (after_mk - before_mk) as u32;
+        if let Some(session) = rt.active_sessions.get_mut(&id) {
+            session.mob_kills = session.mob_kills.saturating_add(delta);
+        }
+    }
+    if after_pk > before_pk {
+        let delta = after_pk - before_pk;
+        for _ in 0..delta {
+            push_pvp_kill(rt, &id, &player_name, "", "unknown", &weapon, now);
+        }
+    }
+}
+
+fn stat_weapon_label(stat_id: &str) -> String {
+    stat_id
+        .split(':')
+        .last()
+        .unwrap_or("melee")
+        .replace('_', " ")
+}
+
+/// Parses vanilla-style death messages for PvP attribution (English patterns).
+pub fn parse_pvp_killer_from_death_message(message: &str) -> Option<(String, String)> {
+    let plain = message.to_ascii_lowercase();
+    let markers = [" was slain by ", " was shot by ", " was killed by ", " was pummeled by "];
+    for marker in markers {
+        if let Some(idx) = plain.find(marker) {
+            let killer_rest = message[idx + marker.len()..].trim();
+            let killer_name = killer_rest
+                .split(" using ")
+                .next()
+                .unwrap_or(killer_rest)
+                .trim()
+                .to_string();
+            let weapon = if let Some(widx) = plain.find(" using ") {
+                message[widx + 7..].trim().to_string()
+            } else {
+                "melee".into()
+            };
+            if !killer_name.is_empty() {
+                return Some((killer_name, weapon));
+            }
+        }
+    }
+    None
+}
+
+pub fn push_pvp_kill(
+    rt: &mut RuntimeState,
+    killer_uuid: &str,
+    killer_name: &str,
+    victim_uuid: &str,
+    victim_name: &str,
+    weapon: &str,
+    now: i64,
+) {
+    if killer_uuid.is_empty() && killer_name.is_empty() {
+        return;
+    }
+    if victim_uuid.is_empty() && victim_name.is_empty() {
+        return;
+    }
+    rt.recent_pvp_kills.push(PvpKillRecord {
+        t: now,
+        killer_uuid: killer_uuid.to_string(),
+        killer_name: killer_name.to_string(),
+        victim_uuid: victim_uuid.to_string(),
+        victim_name: victim_name.to_string(),
+        weapon: weapon.to_string(),
+    });
+    if rt.recent_pvp_kills.len() > MAX_RECENT_PVP_KILLS {
+        let extra = rt.recent_pvp_kills.len() - MAX_RECENT_PVP_KILLS;
+        rt.recent_pvp_kills.drain(0..extra);
+    }
+}
+
+pub fn session_activity(rt: &mut RuntimeState, player: &Player, now_ms: i64) {
+    let id = player_id(player);
+    if let Some(session) = rt.active_sessions.get_mut(&id) {
+        rt.afk_tracker.on_activity(&id, now_ms * 1000, false, session);
+    }
+}
+
+pub fn begin_session(rt: &mut RuntimeState, player: &Player, join_address: String, now: i64) {
+    let id = player_id(player);
     let entry = touch_player(rt, player, now);
-    apply_stat_increment(entry, stat_id, amount);
+    let normalized = normalize_join_address(&join_address, &JoinAddressOptions::default());
+    if !normalized.is_empty() {
+        entry.join_address = normalized.clone();
+    }
+    let gm = GameMode::from_label(&entry.current_gamemode);
+    let world = if entry.last_world.is_empty() {
+        "world".into()
+    } else {
+        entry.last_world.clone()
+    };
+    let session = ActiveSession {
+        user_uuid: id.clone(),
+        session_start_ms: now * 1000,
+        afk_time_ms: 0,
+        mob_kills: 0,
+        deaths: 0,
+        join_address: normalized,
+        world_times: WorldTimes::begin(world, gm, now * 1000),
+    };
+    rt.active_sessions.insert(id.clone(), session);
+    if let Some(session) = rt.active_sessions.get_mut(&id) {
+        rt.afk_tracker.on_activity(&id, now * 1000, false, session);
+    }
+}
+
+pub fn end_session(rt: &mut RuntimeState, player: &Player, now: i64) {
+    let id = player_id(player);
+    if let Some(mut session) = rt.active_sessions.remove(&id) {
+        rt.afk_tracker.on_quit(&id, now * 1000, &mut session);
+        session.world_times.finalize(now * 1000);
+        let afk_secs = (session.afk_time_ms / 1000) as u64;
+        let world_times = session
+            .world_times
+            .export_slices()
+            .into_iter()
+            .map(|(world, s, c, a, sp)| WorldTimeSlice {
+                world,
+                survival_ms: s,
+                creative_ms: c,
+                adventure_ms: a,
+                spectator_ms: sp,
+            })
+            .collect();
+        let record = SessionRecord {
+            start_unix: session.session_start_ms / 1000,
+            end_unix: now,
+            afk_secs,
+            mob_kills: session.mob_kills,
+            deaths: session.deaths,
+            join_address: session.join_address.clone(),
+            world_times,
+        };
+        if let Some(entry) = rt.players.get_mut(&id) {
+            entry.afk_time_secs = entry.afk_time_secs.saturating_add(afk_secs);
+            entry.completed_sessions.push(record);
+            if entry.completed_sessions.len() > MAX_COMPLETED_SESSIONS_PER_PLAYER {
+                let extra = entry.completed_sessions.len() - MAX_COMPLETED_SESSIONS_PER_PLAYER;
+                entry.completed_sessions.drain(0..extra);
+            }
+        }
+    }
+}
+
+pub fn session_world_change(rt: &mut RuntimeState, player: &Player, world: String, now: i64) {
+    let id = player_id(player);
+    session_activity(rt, player, now);
+    if let Some(session) = rt.active_sessions.get_mut(&id) {
+        session.world_times.change_world(world, now * 1000);
+    }
+}
+
+pub fn session_gamemode_change(rt: &mut RuntimeState, player: &Player, mode: GameMode, now: i64) {
+    let id = player_id(player);
+    session_activity(rt, player, now);
+    if let Some(session) = rt.active_sessions.get_mut(&id) {
+        session.world_times.change_gamemode(mode, now * 1000);
+    }
+}
+
+pub fn record_command_usage(rt: &mut RuntimeState, command_line: &str) {
+    let root = command_root_label(command_line);
+    if root.is_empty() {
+        return;
+    }
+    *rt.command_usages.entry(root).or_insert(0) += 1;
+    if rt.command_usages.len() > MAX_SERVER_COMMAND_USAGE_KEYS {
+        let key = rt
+            .command_usages
+            .iter()
+            .min_by_key(|(_, v)| *v)
+            .map(|(k, _)| k.clone());
+        if let Some(k) = key {
+            rt.command_usages.remove(&k);
+        }
+    }
+}
+
+fn command_root_label(command_line: &str) -> String {
+    let trimmed = command_line.trim();
+    let without_slash = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let root = without_slash
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    root.chars().take(20).collect()
 }
 
 pub fn compute_server_totals(rt: &RuntimeState) -> ServerTotals {
@@ -156,6 +524,9 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
         recent_events: rt.recent_events.clone(),
         players,
         activity_samples: rt.activity_samples.clone(),
+        command_usages: rt.command_usages.clone(),
+        recent_pvp_kills: rt.recent_pvp_kills.clone(),
+        performance_samples: rt.performance_samples.clone(),
     };
     let signature =
         patch_analytics_protocol::sign_payload(&payload, &rt.config.export_secret)?;
@@ -174,6 +545,8 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct PersistedState {
     pub players: HashMap<String, PlayerStats>,
+    #[serde(default)]
+    pub command_usages: HashMap<String, u64>,
     pub total_joins: u64,
     pub total_logins: u64,
     pub total_kicks: u64,
@@ -181,12 +554,17 @@ pub struct PersistedState {
     pub activity_samples: Vec<ActivitySample>,
     pub recent_deaths: Vec<DeathRecord>,
     pub recent_events: Vec<AnalyticsEvent>,
+    #[serde(default)]
+    pub recent_pvp_kills: Vec<PvpKillRecord>,
+    #[serde(default)]
+    pub performance_samples: Vec<PerformanceSample>,
 }
 
 pub fn persist_state(rt: &RuntimeState) -> Result<(), String> {
     let path = format!("{}/{STATE_FILENAME}", rt.data_folder);
     let body = PersistedState {
         players: rt.players.clone(),
+        command_usages: rt.command_usages.clone(),
         total_joins: rt.total_joins,
         total_logins: rt.total_logins,
         total_kicks: rt.total_kicks,
@@ -194,6 +572,8 @@ pub fn persist_state(rt: &RuntimeState) -> Result<(), String> {
         activity_samples: rt.activity_samples.clone(),
         recent_deaths: rt.recent_deaths.clone(),
         recent_events: rt.recent_events.clone(),
+        recent_pvp_kills: rt.recent_pvp_kills.clone(),
+        performance_samples: rt.performance_samples.clone(),
     };
     let json = serde_json::to_string_pretty(&body).map_err(|e| e.to_string())?;
     std::fs::write(path, json).map_err(|e| e.to_string())?;

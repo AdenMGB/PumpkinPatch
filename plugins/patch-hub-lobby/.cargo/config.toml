@@ -1,0 +1,8 @@
+[build]
+target = "wasm32-wasip2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"

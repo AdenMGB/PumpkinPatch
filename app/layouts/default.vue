@@ -7,6 +7,7 @@
           <span class="pp-muted statusbar-tag">Server network hub</span>
         </div>
       </header>
+      <AppDownloadBanner />
       <main class="app-contents">
         <slot />
       </main>
@@ -32,7 +33,7 @@
 }
 .app-main-column {
   display: grid;
-  grid-template-rows: var(--top-bar-height) minmax(0, 1fr);
+  grid-template-rows: var(--top-bar-height) auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;

@@ -6,6 +6,8 @@ edition.workspace = true
 
 [dependencies]
 patch-analytics-protocol = { path = "../../plugins/patch-analytics-protocol" }
+patch-plan-core = { path = "../patch-plan-core" }
+patch-network-protocol = { path = "../../plugins/patch-network-protocol" }
 chrono = { version = "0.4", features = ["serde"] }
 directories = "6"
 rand = "0.9"
@@ -20,6 +22,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 futures-util = "0.3"
 tokio-stream = "0.1"
 urlencoding = "2"
+sysinfo = "0.33"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

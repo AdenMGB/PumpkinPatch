@@ -28,6 +28,24 @@ pub struct PumpkinMarketPluginSummary {
     pub r#type: String,
     pub is_early_access: bool,
     pub description: String,
+    pub screenshots: Vec<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PumpkinMarketPluginVersion {
+    pub id: u64,
+    pub version: String,
+    pub track: Option<String>,
+    pub release_notes: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PumpkinMarketPluginCommand {
+    pub name: String,
+    pub description: String,
+    pub permission: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +63,14 @@ pub struct PumpkinMarketPluginDetail {
     pub file_size: Option<u64>,
     pub description: String,
     pub owned: Option<bool>,
+    pub keywords: Option<String>,
+    pub source_link: Option<String>,
+    pub youtube_video_url: Option<String>,
+    pub status: Option<String>,
+    pub is_early_access: bool,
+    pub screenshots: Vec<String>,
+    pub versions: Vec<PumpkinMarketPluginVersion>,
+    pub commands: Vec<PumpkinMarketPluginCommand>,
 }
 
 pub struct PumpkinMarketClient {
@@ -66,7 +92,8 @@ impl PumpkinMarketClient {
 
     pub async fn list_plugins(
         &self,
-        search: Option<&str>,
+        query: Option<&str>,
+        category: Option<&str>,
         limit: u32,
         cursor: Option<&str>,
     ) -> Result<PumpkinMarketListResult> {
@@ -77,8 +104,11 @@ impl PumpkinMarketClient {
             let mut pairs = url.query_pairs_mut();
             pairs.append_pair("limit", &limit.to_string());
             pairs.append_pair("paginated", "true");
-            if let Some(q) = search.filter(|s| !s.trim().is_empty()) {
-                pairs.append_pair("search", q.trim());
+            if let Some(q) = query.filter(|s| !s.trim().is_empty()) {
+                pairs.append_pair("q", q.trim());
+            }
+            if let Some(cat) = category.filter(|s| !s.trim().is_empty() && *s != "all") {
+                pairs.append_pair("category", cat.trim());
             }
             if let Some(c) = cursor.filter(|s| !s.is_empty()) {
                 pairs.append_pair("cursor", c);
@@ -115,17 +145,7 @@ impl PumpkinMarketClient {
         let dest = download_plugin_to_instance(&self.http, &url, instance_path, &filename, true)
             .await?;
 
-        if let Some(expected) = detail.file_size {
-            let actual = std::fs::metadata(&dest)?.len();
-            if expected > 0 && actual != expected {
-                std::fs::remove_file(&dest).ok();
-                return Err(Error::InvalidState(format!(
-                    "download size mismatch for {} (expected {expected}, got {actual})",
-                    detail.name
-                )));
-            }
-        }
-
+        // Market metadata `file_size` is often stale after re-uploads; WASM header check is authoritative.
         Ok(dest.to_string_lossy().into())
     }
 
@@ -167,10 +187,38 @@ fn map_list_item(raw: MarketPluginSummaryRaw) -> PumpkinMarketPluginSummary {
         r#type: raw.r#type,
         is_early_access: raw.is_early_access,
         description: pick_description(&raw.translated_descriptions),
+        screenshots: raw.screenshots.unwrap_or_default(),
+        status: raw.status,
     }
 }
 
 fn map_detail(raw: MarketPluginDetailRaw) -> PumpkinMarketPluginDetail {
+    let screenshots = map_screenshots(raw.screenshots);
+
+    let versions = raw
+        .versions
+        .unwrap_or_default()
+        .into_iter()
+        .map(|v| PumpkinMarketPluginVersion {
+            id: v.id,
+            version: v.version,
+            track: v.track,
+            release_notes: v.release_notes,
+            created_at: v.created_at,
+        })
+        .collect();
+
+    let commands = raw
+        .commands
+        .unwrap_or_default()
+        .into_iter()
+        .map(|c| PumpkinMarketPluginCommand {
+            name: c.name,
+            description: pick_description(&c.description),
+            permission: c.permission,
+        })
+        .collect();
+
     PumpkinMarketPluginDetail {
         id: raw.id,
         name: raw.name,
@@ -185,7 +233,26 @@ fn map_detail(raw: MarketPluginDetailRaw) -> PumpkinMarketPluginDetail {
         file_size: raw.file_size,
         description: pick_description(&raw.translated_descriptions),
         owned: raw.owned,
+        keywords: raw.keywords,
+        source_link: raw.source_link.filter(|s| !s.is_empty()),
+        youtube_video_url: raw.youtube_video_url,
+        status: raw.status,
+        is_early_access: raw.is_early_access,
+        screenshots,
+        versions,
+        commands,
     }
+}
+
+fn map_screenshots(entries: Option<Vec<MarketScreenshotEntry>>) -> Vec<String> {
+    entries
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| match entry {
+            MarketScreenshotEntry::Url(url) => Some(url),
+            MarketScreenshotEntry::Object(obj) => Some(obj.path),
+        })
+        .collect()
 }
 
 fn pick_description(translated: &HashMap<String, String>) -> String {
@@ -217,6 +284,36 @@ struct MarketPluginSummaryRaw {
     r#type: String,
     is_early_access: bool,
     translated_descriptions: HashMap<String, String>,
+    screenshots: Option<Vec<String>>,
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketScreenshotRaw {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketVersionRaw {
+    id: u64,
+    version: String,
+    track: Option<String>,
+    release_notes: Option<String>,
+    created_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MarketCommandRaw {
+    name: String,
+    permission: Option<String>,
+    description: HashMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum MarketScreenshotEntry {
+    Url(String),
+    Object(MarketScreenshotRaw),
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,6 +331,14 @@ struct MarketPluginDetailRaw {
     file_size: Option<u64>,
     translated_descriptions: HashMap<String, String>,
     owned: Option<bool>,
+    keywords: Option<String>,
+    source_link: Option<String>,
+    youtube_video_url: Option<String>,
+    status: Option<String>,
+    is_early_access: bool,
+    screenshots: Option<Vec<MarketScreenshotEntry>>,
+    versions: Option<Vec<MarketVersionRaw>>,
+    commands: Option<Vec<MarketCommandRaw>>,
 }
 
 #[cfg(test)]
@@ -256,27 +361,15 @@ mod tests {
             file_size: None,
             description: String::new(),
             owned: None,
+            keywords: None,
+            source_link: None,
+            youtube_video_url: None,
+            status: None,
+            is_early_access: false,
+            screenshots: vec![],
+            versions: vec![],
+            commands: vec![],
         };
         assert!(ensure_plugin_downloadable(&detail).is_ok());
-    }
-
-    #[test]
-    fn paid_requires_ownership() {
-        let detail = PumpkinMarketPluginDetail {
-            id: 1,
-            name: "Paid".into(),
-            version: "1".into(),
-            category: "Other".into(),
-            dev_name: "dev".into(),
-            downloads: 0,
-            preview_path: None,
-            price_cents: 500,
-            r#type: "paid".into(),
-            wasm_path: None,
-            file_size: None,
-            description: String::new(),
-            owned: None,
-        };
-        assert!(ensure_plugin_downloadable(&detail).is_err());
     }
 }

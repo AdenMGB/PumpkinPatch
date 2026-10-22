@@ -1,11 +1,10 @@
 use super::Result;
-use crate::bundled_plugins::provision_network_plugins;
+use crate::bundled_plugins::{deploy_manifest_plugin, provision_network_plugins};
 use crate::state::AppStateHandle;
 use patch_core::{
-    deploy_plugin, ping_server, CreateNetworkRequest, JoinInfo, LogLine, NetworkOrchestrator,
-    NetworkSummary, PingResult, PluginManifest, PluginManifestEntry,
+    append_log_line, ping_server, CreateNetworkRequest, DownloadProgress, JoinInfo, LogLine,
+    NetworkOrchestrator, NetworkSummary, PingResult, PluginManifest, PluginManifestEntry,
 };
-use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
@@ -69,7 +68,6 @@ pub async fn network_create(
         .await?;
 
     provision_network_plugins(&state, &inner, &summary).await;
-    deploy_lobby_plugin_if_configured(&state, &inner, &summary);
 
     let _ = app.emit("network-created", &summary.network.id);
     Ok(summary)
@@ -78,10 +76,12 @@ pub async fn network_create(
 #[tauri::command]
 pub async fn network_delete(state: tauri::State<'_, AppStateHandle>, id: Uuid) -> Result<()> {
     let inner = state.get().await?;
+    let network = inner.db.get_network(id).await?;
     {
         let mut processes = inner.processes.write().await;
         if processes.is_running(id) {
-            processes.stop_network(id).await?;
+            let servers = inner.db.list_servers_for_network(id).await?;
+            processes.stop_network(id, &network, &servers).await?;
         }
     }
     inner.db.delete_network(id).await?;
@@ -89,6 +89,7 @@ pub async fn network_delete(state: tauri::State<'_, AppStateHandle>, id: Uuid) -
     if path.exists() {
         std::fs::remove_dir_all(path).ok();
     }
+    patch_core::clear_logs(&inner.dirs.logs, id).ok();
     Ok(())
 }
 
@@ -105,24 +106,49 @@ pub async fn network_start(
     let settings = inner.settings().await;
 
     let (log_tx, mut log_rx) = tokio::sync::mpsc::unbounded_channel::<LogLine>();
+    let logs_dir = inner.dirs.logs.clone();
     let app_handle = app.clone();
     tokio::spawn(async move {
         while let Some(line) = log_rx.recv().await {
+            append_log_line(&logs_dir, &line).ok();
             let _ = app_handle.emit("network-log", &line);
         }
     });
 
-    let (pumpkin, velocity) = inner
+    let (progress_tx, mut progress_rx) = tokio::sync::mpsc::channel::<DownloadProgress>(64);
+    let progress_app = app.clone();
+    tokio::spawn(async move {
+        while let Some(progress) = progress_rx.recv().await {
+            let _ = progress_app.emit("network-download-progress", &progress);
+        }
+    });
+
+    let plugins_root = state.plugins_root();
+    let (pumpkins, velocity) = inner
         .networks
-        .ensure_binaries_for_network(&servers, None)
+        .ensure_binaries_for_network(&servers, Some(progress_tx), Some(plugins_root.as_path()))
         .await?;
+
+    let status = inner.processes.read().await.status(id);
+    let join_address = format!("{}:{}", settings.bind_host, network.hub_port);
+    provision_network_plugins(
+        &state,
+        &inner,
+        &NetworkSummary {
+            network: network.clone(),
+            servers: servers.clone(),
+            status,
+            join_address,
+        },
+    )
+    .await;
 
     let mut processes = inner.processes.write().await;
     processes
         .start_network(
             &network,
             &servers,
-            pumpkin,
+            pumpkins,
             velocity,
             &java_path,
             &settings.bind_host,
@@ -141,8 +167,10 @@ pub async fn network_stop(
     id: Uuid,
 ) -> Result<()> {
     let inner = state.get().await?;
+    let network = inner.db.get_network(id).await?;
+    let servers = inner.db.list_servers_for_network(id).await?;
     let mut processes = inner.processes.write().await;
-    processes.stop_network(id).await?;
+    processes.stop_network(id, &network, &servers).await?;
     let _ = app.emit("network-stopped", id);
     Ok(())
 }
@@ -170,6 +198,17 @@ pub async fn network_ping_hub(
 }
 
 #[tauri::command]
+pub async fn network_logs_get(
+    state: tauri::State<'_, AppStateHandle>,
+    network_id: Uuid,
+    limit: Option<u32>,
+) -> Result<Vec<LogLine>> {
+    let inner = state.get().await?;
+    let cap = limit.unwrap_or(500).min(2000) as usize;
+    Ok(patch_core::read_log_tail(&inner.dirs.logs, network_id, cap)?)
+}
+
+#[tauri::command]
 pub async fn plugin_list_available(
     state: tauri::State<'_, AppStateHandle>,
 ) -> Result<Vec<PluginManifestEntry>> {
@@ -186,54 +225,13 @@ pub async fn plugin_deploy(
     server_role: Option<String>,
 ) -> Result<String> {
     let inner = state.get().await?;
-    let root = state.plugins_root();
-    let manifest = PluginManifest::load_from_repo(&root)?;
-    let entry = manifest
-        .get(&plugin_id)
-        .ok_or_else(|| patch_core::Error::NotFound(plugin_id.clone()))?;
-    let dest = deploy_plugin(
-        &root,
-        entry,
-        PathBuf::from(&instance_path).as_path(),
-        &inner.dirs.plugins_cache,
+    deploy_manifest_plugin(
+        &state,
+        &inner,
+        &plugin_id,
+        &instance_path,
         server_role.as_deref(),
-    )?;
-    Ok(dest.to_string_lossy().into())
-}
-
-fn deploy_lobby_plugin_if_configured(
-    state: &AppStateHandle,
-    inner: &patch_core::AppState,
-    summary: &NetworkSummary,
-) {
-    let Some(lobby) = summary
-        .servers
-        .iter()
-        .find(|s| s.role == "lobby")
-        .cloned()
-    else {
-        return;
-    };
-
-    let root = state.plugins_root();
-    let Ok(manifest) = PluginManifest::load_from_repo(&root) else {
-        eprintln!("[patch] failed to load bundled plugin manifest at {}", root.display());
-        return;
-    };
-    let Some(entry) = manifest.get("patch-hub-lobby") else {
-        return;
-    };
-
-    if let Err(err) = deploy_plugin(
-        &root,
-        entry,
-        PathBuf::from(&lobby.data_path).as_path(),
-        &inner.dirs.plugins_cache,
-        Some("lobby"),
-    ) {
-        eprintln!(
-            "[patch] lobby plugin deploy failed for {}: {err}",
-            lobby.name
-        );
-    }
+    )
+    .await
+    .map_err(Into::into)
 }

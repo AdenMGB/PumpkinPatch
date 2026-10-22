@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: Option<u64>,
@@ -20,6 +20,16 @@ pub enum HostOs {
     Windows,
     Linux,
     MacOs,
+}
+
+impl HostOs {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::Linux => "Linux",
+            Self::MacOs => "MacOS",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,12 +48,22 @@ pub fn detect_host() -> Result<(HostOs, HostArch)> {
             };
             Ok((HostOs::Windows, arch))
         }
-        "linux" => Err(Error::UnsupportedPlatform(
-            "Linux Pumpkin downloads not enabled in this build yet".into(),
-        )),
-        "macos" => Err(Error::UnsupportedPlatform(
-            "macOS Pumpkin downloads not enabled in this build yet".into(),
-        )),
+        "linux" => {
+            let arch = match std::env::consts::ARCH {
+                "x86_64" => HostArch::X64,
+                "aarch64" => HostArch::Arm64,
+                _ => return Err(Error::UnsupportedPlatform(std::env::consts::ARCH.into())),
+            };
+            Ok((HostOs::Linux, arch))
+        }
+        "macos" => {
+            let arch = match std::env::consts::ARCH {
+                "x86_64" => HostArch::X64,
+                "aarch64" => HostArch::Arm64,
+                _ => return Err(Error::UnsupportedPlatform(std::env::consts::ARCH.into())),
+            };
+            Ok((HostOs::MacOs, arch))
+        }
         other => Err(Error::UnsupportedPlatform(other.into())),
     }
 }
@@ -58,10 +78,14 @@ pub fn resolve_pumpkin_artifact(
     arch: HostArch,
     channel: &str,
 ) -> Result<PumpkinArtifact> {
-    let filename = match (os, arch) {
-        (HostOs::Windows, HostArch::X64) => "pumpkin-X64-Windows.exe",
-        (HostOs::Windows, HostArch::Arm64) => "pumpkin-ARM64-Windows.exe",
-        _ => return Err(Error::UnsupportedPlatform("host".into())),
+    let arch_label = match arch {
+        HostArch::X64 => "X64",
+        HostArch::Arm64 => "ARM64",
+    };
+    let filename = match os {
+        HostOs::Windows => format!("pumpkin-{arch_label}-Windows.exe"),
+        HostOs::Linux => format!("pumpkin-{arch_label}-Linux"),
+        HostOs::MacOs => format!("pumpkin-{arch_label}-MacOS"),
     };
     let tag = match channel {
         "latest" | "nightly" => "nightly",
@@ -106,10 +130,12 @@ impl ReleaseService {
         &self,
         channel: &str,
         progress: Option<mpsc::Sender<DownloadProgress>>,
+        plugins_root: Option<&Path>,
     ) -> Result<PathBuf> {
         let (os, arch) = detect_host()?;
         let artifact = resolve_pumpkin_artifact(os, arch, channel)?;
         let dest = self.pumpkin_binary_path(channel, &artifact.filename);
+        invalidate_pumpkin_binary_if_plugin_api_changed(plugins_root, &dest);
         if dest.exists() {
             return Ok(dest);
         }
@@ -118,6 +144,7 @@ impl ReleaseService {
         }
         self.download_file(&artifact.url, &dest, &artifact.filename, progress)
             .await?;
+        record_pumpkin_plugin_api_rev(plugins_root, &dest);
         Ok(dest)
     }
 
@@ -251,6 +278,46 @@ fn select_velocity_build(builds: &[FillBuild]) -> Option<&FillBuild> {
             (b.channel == "RECOMMENDED" || b.channel == "STABLE")
                 && b.downloads.contains_key("server:default")
         })
+}
+
+const PUMPKIN_API_REV_FILE: &str = "pumpkin-api-rev.txt";
+const PUMPKIN_API_REV_SENTINEL: &str = ".pumpkin-plugin-api-rev";
+
+/// When bundled WASM was rebuilt for a new Pumpkin plugin API commit, drop the cached server binary
+/// so the next start re-downloads nightly (built from the same upstream tree).
+fn invalidate_pumpkin_binary_if_plugin_api_changed(plugins_root: Option<&Path>, dest: &Path) {
+    let Some(root) = plugins_root else {
+        return;
+    };
+    let rev_file = root.join("artifacts").join(PUMPKIN_API_REV_FILE);
+    if !rev_file.exists() || !dest.exists() {
+        return;
+    }
+    let bundled = std::fs::read_to_string(&rev_file).unwrap_or_default();
+    let sentinel = dest
+        .parent()
+        .map(|p| p.join(PUMPKIN_API_REV_SENTINEL))
+        .unwrap_or_else(|| dest.with_extension("rev"));
+    let cached = std::fs::read_to_string(&sentinel).unwrap_or_default();
+    if bundled.trim() == cached.trim() {
+        return;
+    }
+    let _ = std::fs::remove_file(dest);
+}
+
+fn record_pumpkin_plugin_api_rev(plugins_root: Option<&Path>, dest: &Path) {
+    let Some(root) = plugins_root else {
+        return;
+    };
+    let rev_file = root.join("artifacts").join(PUMPKIN_API_REV_FILE);
+    if !rev_file.exists() {
+        return;
+    }
+    let bundled = std::fs::read_to_string(&rev_file).unwrap_or_default();
+    if let Some(parent) = dest.parent() {
+        let sentinel = parent.join(PUMPKIN_API_REV_SENTINEL);
+        let _ = std::fs::write(sentinel, bundled.trim());
+    }
 }
 
 #[derive(Debug, Deserialize)]

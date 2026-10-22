@@ -61,8 +61,13 @@ function formatBytes(n: number) {
 
 <template>
   <div class="browser">
+    <p class="pp-muted catalog-note">
+      Modrinth results are filtered to plugin projects with <code class="pp-code">.wasm</code>
+      builds for Pumpkin — not Paper/Spigot JARs.
+    </p>
     <PpCard padding="lg">
       <h3 class="section-title">Installed on {{ server.name }}</h3>
+      <p class="pp-muted restart-hint">Restart the network after installing or removing plugins.</p>
       <p v-if="!installed?.length" class="pp-muted">No plugins yet. Browse Modrinth below.</p>
       <ul v-else class="installed-list">
         <li v-for="p in installed" :key="p.path" class="installed-row">

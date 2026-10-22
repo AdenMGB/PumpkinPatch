@@ -11,12 +11,17 @@ pub const PLUGIN_DATA_DIR_NAME: &str = "PatchPlan";
 pub const CONFIG_FILENAME: &str = "patch-config.json";
 pub const EXPORT_FILENAME: &str = "export.json";
 pub const STATE_FILENAME: &str = "state.json";
-pub const EXPORT_SCHEMA_VERSION: u32 = 2;
+pub const EXPORT_SCHEMA_VERSION: u32 = 5;
+pub const MAX_PERFORMANCE_SAMPLES: usize = 576;
+pub const MAX_RECENT_PVP_KILLS: usize = 150;
+pub const MAX_COMPLETED_SESSIONS_PER_PLAYER: usize = 96;
+pub const MAX_SERVER_COMMAND_USAGE_KEYS: usize = 256;
 
 pub const MAX_RECENT_DEATHS: usize = 120;
 pub const MAX_RECENT_EVENTS: usize = 400;
 pub const MAX_RECENT_ADVANCEMENTS_PER_PLAYER: usize = 64;
 pub const MAX_EXPORT_PLAYERS: usize = 512;
+pub const MAX_PING_WINDOWS_PER_PLAYER: usize = 96;
 pub const MAX_ACTIVITY_SAMPLES: usize = 576;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +31,9 @@ pub struct PatchPlanConfig {
     pub server_name: String,
     pub network_id: String,
     pub export_secret: String,
+    /// Virtual host players use to join the network (Plan join address).
+    #[serde(default)]
+    pub default_join_address: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -63,12 +71,76 @@ pub struct PlayerStats {
     pub statistic_totals: HashMap<String, u64>,
     #[serde(default)]
     pub recent_advancements: Vec<String>,
+    #[serde(default)]
+    pub afk_time_secs: u64,
+    #[serde(default)]
+    pub join_address: String,
+    #[serde(default)]
+    pub geolocation: String,
+    #[serde(default)]
+    pub nick: String,
+    #[serde(default)]
+    pub ping_windows: Vec<PingWindowRecord>,
+    #[serde(default)]
+    pub completed_sessions: Vec<SessionRecord>,
+}
+
+/// One-minute aggregated ping window (§2.4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PingWindowRecord {
+    pub t_unix: i64,
+    pub avg_ping: u32,
+    pub min_ping: u32,
+    pub max_ping: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRecord {
+    pub start_unix: i64,
+    pub end_unix: i64,
+    pub afk_secs: u64,
+    #[serde(default)]
+    pub mob_kills: u32,
+    #[serde(default)]
+    pub deaths: u32,
+    #[serde(default)]
+    pub join_address: String,
+    #[serde(default)]
+    pub world_times: Vec<WorldTimeSlice>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldTimeSlice {
+    pub world: String,
+    pub survival_ms: u64,
+    pub creative_ms: u64,
+    pub adventure_ms: u64,
+    pub spectator_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PvpKillRecord {
+    pub t: i64,
+    pub killer_uuid: String,
+    pub killer_name: String,
+    pub victim_uuid: String,
+    pub victim_name: String,
+    pub weapon: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivitySample {
     pub t: i64,
     pub online: u32,
+}
+
+/// Wall-clock TPS sample between plugin tick callbacks (§2.5 partial).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceSample {
+    pub t: i64,
+    pub ticks_per_second: f64,
+    pub mspt_avg: f64,
+    pub players_online: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -124,6 +196,12 @@ pub struct AnalyticsPayload {
     pub recent_events: Vec<AnalyticsEvent>,
     pub players: Vec<PlayerStats>,
     pub activity_samples: Vec<ActivitySample>,
+    #[serde(default)]
+    pub command_usages: HashMap<String, u64>,
+    #[serde(default)]
+    pub recent_pvp_kills: Vec<PvpKillRecord>,
+    #[serde(default)]
+    pub performance_samples: Vec<PerformanceSample>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,6 +303,8 @@ mod tests {
             recent_events: vec![],
             players: vec![],
             activity_samples: vec![],
+            command_usages: HashMap::new(),
+            recent_pvp_kills: vec![],
         };
         let sig = sign_payload(&payload, "test-secret").unwrap();
         let export = SignedExport {

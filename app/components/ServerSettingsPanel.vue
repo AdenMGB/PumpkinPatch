@@ -64,6 +64,20 @@ const versionMutation = useMutation({
   },
 })
 
+const channelMutation = useMutation({
+  mutationFn: (ch: string) => api.serverSetPumpkinChannel(props.server.id, ch),
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ['network', props.server.network_id] })
+  },
+})
+
+function onPumpkinChannelBlur() {
+  const ch = pumpkinChannel.value.trim()
+  if (ch && ch !== props.server.pumpkin_channel) {
+    channelMutation.mutate(ch)
+  }
+}
+
 function onMinecraftVersionChange(v: string) {
   minecraftVersion.value = v
   if (v !== props.server.minecraft_version) {
@@ -85,15 +99,15 @@ function onMinecraftVersionChange(v: string) {
       <PpVersionSelect
         :model-value="minecraftVersion"
         label="Minecraft version"
-        hint="Used for Modrinth plugin search and network metadata."
+        hint="Metadata for Modrinth search and display — Pumpkin binary is per release channel, not per MC version."
         @update:model-value="onMinecraftVersionChange"
       />
       <PpInput
         v-model="pumpkinChannel"
         class="channel-field"
         label="Pumpkin binary channel"
-        hint="GitHub release tag (e.g. nightly). Changing requires re-download on next start."
-        disabled
+        hint="GitHub release tag (e.g. nightly). Re-downloads on next network start."
+        @blur="onPumpkinChannelBlur"
       />
     </section>
 

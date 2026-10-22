@@ -1,4 +1,5 @@
 use crate::db::Database;
+use crate::plan_json_cache::PlanJsonCache;
 use crate::error::Result;
 use crate::java::resolve_java_executable;
 use crate::models::AppSettings;
@@ -16,6 +17,7 @@ pub struct AppState {
     pub releases: ReleaseService,
     pub networks: NetworkOrchestrator,
     pub processes: Arc<RwLock<ProcessSupervisor>>,
+    pub plan_json_cache: Arc<PlanJsonCache>,
     settings: Arc<RwLock<AppSettings>>,
 }
 
@@ -28,6 +30,7 @@ pub struct AppDirs {
     pub binaries_velocity: PathBuf,
     pub plugins_cache: PathBuf,
     pub cache: PathBuf,
+    pub logs: PathBuf,
     pub database: PathBuf,
 }
 
@@ -40,6 +43,7 @@ impl AppDirs {
             binaries_velocity: root.join("binaries").join("velocity"),
             plugins_cache: root.join("plugins").join("cache"),
             cache: root.join("cache"),
+            logs: root.join("logs"),
             database: root.join("patch-core.db"),
             root,
         }
@@ -54,6 +58,7 @@ impl AppDirs {
             &self.binaries_velocity,
             &self.plugins_cache,
             &self.cache,
+            &self.logs,
         ] {
             std::fs::create_dir_all(dir)?;
         }
@@ -80,6 +85,7 @@ impl AppState {
             releases,
             networks,
             processes,
+            plan_json_cache: PlanJsonCache::new(),
             settings: Arc::new(RwLock::new(settings)),
         })
     }

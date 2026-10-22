@@ -1,14 +1,19 @@
 use crate::state::{
-    gamemode_label, player_id, push_death, push_event, push_sample, record_stat, touch_player,
-    unix_now, with_runtime,
+    apply_player_identity, begin_session, end_session, gamemode_label,
+    note_prelogin_geolocation, parse_pvp_killer_from_death_message, player_id, push_death,
+    push_event, push_pvp_kill, push_sample, record_command_usage, record_stat,
+    register_online_ping, resolve_join_address, session_activity, session_gamemode_change,
+    session_world_change, touch_player, unregister_online_ping, unix_now, with_runtime,
 };
+use patch_plan_core::GameMode;
 use patch_analytics_protocol::MAX_RECENT_ADVANCEMENTS_PER_PLAYER;
 use pumpkin_plugin_api::events::{
     EventHandler, PlayerAdvancementDoneEvent, PlayerBedEnterEvent, PlayerChangedWorldEvent,
     PlayerChatEvent, PlayerCommandSendEvent, PlayerDeathEvent, PlayerDropItemEvent,
     PlayerExpChangeEvent, PlayerFishEvent, PlayerGamemodeChangeEvent, PlayerHarvestBlockEvent,
     PlayerItemBreakEvent, PlayerItemConsumeEvent, PlayerItemDamageEvent, PlayerJoinEvent,
-    PlayerKickEvent, PlayerLeaveEvent, PlayerLevelChangeEvent, PlayerLoginEvent, PlayerPortalEvent,
+    PlayerKickEvent, PlayerLeaveEvent, PlayerLevelChangeEvent, PlayerLoginEvent,
+    PlayerPreLoginEvent, PlayerPortalEvent,
     PlayerRecipeDiscoverEvent, PlayerRespawnEvent, PlayerStatisticIncrementEvent,
     PlayerTeleportEvent,
 };
@@ -26,6 +31,10 @@ impl EventHandler<PlayerJoinEvent> for JoinHandler {
             rt.total_joins += 1;
             let entry = touch_player(rt, &event.player, now);
             entry.join_count += 1;
+            apply_player_identity(rt, &event.player, now);
+            let join_addr = resolve_join_address(rt, &event.player);
+            begin_session(rt, &event.player, join_addr, now);
+            register_online_ping(rt, &player_id(&event.player), now);
             let online = server.get_player_count();
             rt.peak_online = rt.peak_online.max(online);
             push_sample(rt, now, online);
@@ -50,9 +59,25 @@ impl EventHandler<PlayerLeaveEvent> for LeaveHandler {
                 entry.playtime_secs = entry.playtime_secs.saturating_add(delta);
                 entry.last_seen_unix = now;
             }
+            unregister_online_ping(rt, &player_id(&event.player));
+            end_session(rt, &event.player, now);
             push_event(rt, "leave", &event.player, "left server".into());
             let online = server.get_player_count().saturating_sub(1);
             push_sample(rt, now, online);
+        });
+        event
+    }
+}
+
+pub struct PreLoginHandler;
+impl EventHandler<PlayerPreLoginEvent> for PreLoginHandler {
+    fn handle(
+        &self,
+        _server: Server,
+        event: <PlayerPreLoginEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
+    ) -> <PlayerPreLoginEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
+        with_runtime(|rt| {
+            note_prelogin_geolocation(rt, &event.player_uuid, &event.ip_address);
         });
         event
     }
@@ -109,7 +134,22 @@ impl EventHandler<PlayerDeathEvent> for DeathHandler {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.deaths += 1;
+            session_activity(rt, &event.player, now);
+            if let Some(session) = rt.active_sessions.get_mut(&player_id(&event.player)) {
+                session.deaths += 1;
+            }
             push_death(rt, &event.player, msg.clone());
+            if let Some((killer_name, weapon)) = parse_pvp_killer_from_death_message(&msg) {
+                push_pvp_kill(
+                    rt,
+                    "",
+                    &killer_name,
+                    &player_id(&event.player),
+                    &event.player.get_name(),
+                    &weapon,
+                    now,
+                );
+            }
             push_event(rt, "death", &event.player, msg);
         });
         event
@@ -192,6 +232,12 @@ impl EventHandler<PlayerGamemodeChangeEvent> for GamemodeHandler {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.current_gamemode = new_mode.clone();
+            session_gamemode_change(
+                rt,
+                &event.player,
+                GameMode::from_label(&new_mode),
+                now,
+            );
             push_event(
                 rt,
                 "gamemode",
@@ -223,6 +269,7 @@ impl EventHandler<PlayerChangedWorldEvent> for WorldChangeHandler {
             let entry = touch_player(rt, &event.player, now);
             entry.last_world = world.clone();
             entry.world_changes += 1;
+            session_world_change(rt, &event.player, world.clone(), now);
             push_event(rt, "world", &event.player, world);
         });
         event
@@ -377,6 +424,7 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.chat_messages += 1;
+            session_activity(rt, &event.player, now);
         });
         event
     }
@@ -396,6 +444,8 @@ impl EventHandler<PlayerCommandSendEvent> for CommandHandler {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.commands_used += 1;
+            record_command_usage(rt, &event.command);
+            session_activity(rt, &event.player, now);
             push_event(rt, "command", &event.player, event.command.clone());
         });
         event

@@ -4,10 +4,10 @@
       "id": "patch-hub-lobby",
       "name": "Pumpkin Patch Hub Lobby",
       "version": "0.1.0",
-      "description": "Lobby server selector scaffold — replace artifact with WASM build from patch-hub-lobby",
+      "description": "Lobby server selector — /patchjoin and join hints for Velocity backends",
       "artifact": "artifacts/patch-hub-lobby.wasm",
       "targets": ["lobby"],
-      "auto_deploy": false
+      "auto_deploy": true
     },
     {
       "id": "patch-plan-analytics",

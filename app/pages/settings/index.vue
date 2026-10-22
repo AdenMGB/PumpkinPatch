@@ -28,6 +28,13 @@ const saveMutation = useMutation({
   mutationFn: () => api.settingsSet(form.value),
   onSuccess: () => queryClient.invalidateQueries({ queryKey: ['settings'] }),
 })
+
+const detectMutation = useMutation({
+  mutationFn: () => api.settingsDetectJava(),
+  onSuccess: (res) => {
+    if (res.resolved_path) form.value.java_path = res.resolved_path
+  },
+})
 </script>
 
 <template>
@@ -43,6 +50,18 @@ const saveMutation = useMutation({
           label="Java executable"
           hint="Use java for auto-detect (JDK 17+). Full path is saved after detection."
         />
+        <PpButton
+          type="button"
+          variant="secondary"
+          :loading="detectMutation.isPending.value"
+          @click="detectMutation.mutate()"
+        >
+          Detect Java
+        </PpButton>
+        <p v-if="detectMutation.data?.candidates?.length" class="pp-muted candidates">
+          Found:
+          {{ detectMutation.data.candidates.slice(0, 3).join(' · ') }}
+        </p>
         <PpInput
           v-model="form.bind_host"
           label="Bind host"
@@ -70,5 +89,10 @@ const saveMutation = useMutation({
   display: flex;
   flex-direction: column;
   gap: 1.15rem;
+}
+.candidates {
+  margin: -0.5rem 0 0;
+  font-size: 0.75rem;
+  word-break: break-all;
 }
 </style>

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
+    "dev:all": "pnpm run plugins:build && pnpm run dev",
+    "plugins:build": "node scripts/build-plugins.mjs",
     "build": "tauri build",
     "frontend:dev": "nuxt dev",
     "frontend:build": "nuxt build",

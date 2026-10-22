@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
+use tokio::time::timeout;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -23,6 +24,7 @@ pub struct LogLine {
 
 struct ManagedPumpkin {
     child: Child,
+    stdin: Option<ChildStdin>,
 }
 
 struct ManagedHub {
@@ -64,7 +66,7 @@ impl ProcessSupervisor {
         &mut self,
         network: &NetworkRecord,
         servers: &[ServerRecord],
-        pumpkin_binary: PathBuf,
+        pumpkin_binaries: HashMap<String, PathBuf>,
         velocity_jar: PathBuf,
         java_path: &str,
         bind_host: &str,
@@ -77,7 +79,7 @@ impl ProcessSupervisor {
         self.statuses.insert(network.id, NetworkRuntimeStatus::Starting);
 
         let hub_path = PathBuf::from(&network.data_path).join("hub");
-        let mut server_children = HashMap::new();
+        let mut spawned_children = HashMap::new();
 
         let backends: Vec<_> = servers
             .iter()
@@ -85,97 +87,170 @@ impl ProcessSupervisor {
             .collect();
         let lobbies: Vec<_> = servers.iter().filter(|s| s.role == "lobby").collect();
 
-        orchestrator.sync_network_instances(network, servers, bind_host)?;
+        let mut hub_child: Option<ManagedHub> = None;
 
-        let lobby = lobbies
-            .first()
-            .ok_or_else(|| Error::InvalidState("network has no lobby server".into()))?;
+        let start_result: Result<()> = async {
+            orchestrator.sync_network_instances(network, servers, bind_host)?;
 
-        let lobby_child = spawn_pumpkin(
-            &pumpkin_binary,
-            &PathBuf::from(&lobby.data_path),
-            &lobby.name,
-            network.id,
-            log_tx.clone(),
-        )?;
-        server_children.insert(lobby.id, lobby_child);
+            let lobby = lobbies
+                .first()
+                .ok_or_else(|| Error::InvalidState("network has no lobby server".into()))?;
 
-        wait_for_tcp_port("127.0.0.1", lobby.game_port, Duration::from_secs(180))
-            .await
-            .map_err(|e| {
-                Error::Other(format!(
-                    "lobby did not open on port {}: {e}. Check console logs for pumpkin:Lobby errors.",
-                    lobby.game_port
-                ))
-            })?;
-
-        for server in backends {
-            let child = spawn_pumpkin(
-                &pumpkin_binary,
-                &PathBuf::from(&server.data_path),
-                &server.name,
+            let lobby_binary = pumpkin_binary_for_server(&pumpkin_binaries, lobby)?;
+            let lobby_child = spawn_pumpkin(
+                &lobby_binary,
+                &PathBuf::from(&lobby.data_path),
+                &lobby.name,
                 network.id,
                 log_tx.clone(),
             )?;
-            server_children.insert(server.id, child);
-            wait_for_tcp_port("127.0.0.1", server.game_port, Duration::from_secs(180))
+            spawned_children.insert(lobby.id, lobby_child);
+
+            wait_for_tcp_port("127.0.0.1", lobby.game_port, Duration::from_secs(180))
                 .await
                 .map_err(|e| {
                     Error::Other(format!(
-                        "backend \"{}\" did not open on port {}: {e}. Check pumpkin:{} logs.",
-                        server.name,
-                        server.game_port,
-                        server.name
+                        "lobby did not open on port {}: {e}. Check console logs for pumpkin:Lobby errors.",
+                        lobby.game_port
                     ))
                 })?;
-        }
 
-        for extra in lobbies.iter().skip(1) {
-            let child = spawn_pumpkin(
-                &pumpkin_binary,
-                &PathBuf::from(&extra.data_path),
-                &extra.name,
+            for server in backends {
+                let binary = pumpkin_binary_for_server(&pumpkin_binaries, server)?;
+                let child = spawn_pumpkin(
+                    &binary,
+                    &PathBuf::from(&server.data_path),
+                    &server.name,
+                    network.id,
+                    log_tx.clone(),
+                )?;
+                spawned_children.insert(server.id, child);
+                wait_for_tcp_port("127.0.0.1", server.game_port, Duration::from_secs(180))
+                    .await
+                    .map_err(|e| {
+                        Error::Other(format!(
+                            "backend \"{}\" did not open on port {}: {e}. Check pumpkin:{} logs.",
+                            server.name,
+                            server.game_port,
+                            server.name
+                        ))
+                    })?;
+            }
+
+            for extra in lobbies.iter().skip(1) {
+                let binary = pumpkin_binary_for_server(&pumpkin_binaries, extra)?;
+                let child = spawn_pumpkin(
+                    &binary,
+                    &PathBuf::from(&extra.data_path),
+                    &extra.name,
+                    network.id,
+                    log_tx.clone(),
+                )?;
+                spawned_children.insert(extra.id, child);
+            }
+
+            hub_child = Some(spawn_velocity(
+                java_path,
+                &velocity_jar,
+                &hub_path,
                 network.id,
                 log_tx.clone(),
-            )?;
-            server_children.insert(extra.id, child);
+            )?);
+
+            Ok(())
+        }
+        .await;
+
+        if let Err(err) = start_result {
+            for (_, managed) in spawned_children.iter_mut() {
+                let _ = managed.child.start_kill();
+                let _ = managed.child.wait().await;
+            }
+            if let Some(mut hub) = hub_child {
+                let _ = hub.child.start_kill();
+                let _ = hub.child.wait().await;
+            }
+            self.statuses.insert(network.id, NetworkRuntimeStatus::Error);
+            return Err(err);
         }
 
-        let hub = spawn_velocity(
-            java_path,
-            &velocity_jar,
-            &hub_path,
-            network.id,
-            log_tx.clone(),
-        )?;
-
+        let hub = hub_child.ok_or_else(|| Error::Other("velocity hub missing after start".into()))?;
         self.running.insert(
             network.id,
             RunningNetwork {
                 network_id: network.id,
                 hub,
-                servers: server_children,
+                servers: spawned_children,
             },
         );
         self.statuses.insert(network.id, NetworkRuntimeStatus::Running);
         Ok(())
     }
 
-    pub async fn stop_network(&mut self, network_id: Uuid) -> Result<()> {
-        let running = self
+    pub async fn stop_network(
+        &mut self,
+        network_id: Uuid,
+        network: &NetworkRecord,
+        servers: &[ServerRecord],
+    ) -> Result<()> {
+        let mut running = self
             .running
             .remove(&network_id)
             .ok_or_else(|| Error::InvalidState("network not running".into()))?;
         self.statuses.insert(network_id, NetworkRuntimeStatus::Stopping);
 
-        for (_, mut managed) in running.servers {
-            let _ = managed.child.kill().await;
+        for server in servers {
+            let managed = running.servers.get_mut(&server.id);
+            if managed.is_none() {
+                continue;
+            }
+            let managed = managed.unwrap();
+            let port = rcon_port_for_game_port(server.game_port);
+            let password = rcon_password_for_server(&network.forwarding_secret, server.game_port);
+            if send_rcon_command("127.0.0.1", port, &password, "stop")
+                .await
+                .is_err()
+            {
+                let _ = pumpkin_console_write(managed.stdin.as_mut(), "stop").await;
+            }
         }
-        let mut hub = running.hub.child;
-        let _ = hub.kill().await;
 
+        let RunningNetwork {
+            hub,
+            servers: mut pumpkin_children,
+            ..
+        } = running;
+        let mut hub_child = hub.child;
+        if let Some(mut stdin) = hub.stdin {
+            let _ = stdin.write_all(b"shutdown\n").await;
+            let _ = stdin.flush().await;
+        }
+
+        let _ = timeout(Duration::from_secs(25), async {
+            for (_, managed) in pumpkin_children.iter_mut() {
+                let _ = managed.child.wait().await;
+            }
+            let _ = hub_child.wait().await;
+        })
+        .await;
+
+        self.force_kill_children(&mut pumpkin_children, &mut hub_child)
+            .await;
         self.statuses.insert(network_id, NetworkRuntimeStatus::Stopped);
         Ok(())
+    }
+
+    async fn force_kill_children(
+        &mut self,
+        servers: &mut HashMap<Uuid, ManagedPumpkin>,
+        hub: &mut Child,
+    ) {
+        for (_, managed) in servers.iter_mut() {
+            let _ = managed.child.start_kill();
+            let _ = managed.child.wait().await;
+        }
+        let _ = hub.start_kill();
+        let _ = hub.wait().await;
     }
 
     /// `target` is `"hub"` for Velocity, or a Pumpkin server UUID string.
@@ -210,7 +285,10 @@ impl ProcessSupervisor {
                 .flush()
                 .await
                 .map_err(|e| Error::Other(format!("failed to flush Velocity console: {e}")))?;
-            return Ok("Sent to Velocity console (output appears in logs).".into());
+            return Ok(
+                "Sent to Velocity (graceful shutdown: `shutdown`; reload config: `velocity reload`)."
+                    .into(),
+            );
         }
 
         let server_id = Uuid::parse_str(target)
@@ -226,13 +304,56 @@ impl ProcessSupervisor {
 
         let port = rcon_port_for_game_port(server.game_port);
         let password = rcon_password_for_server(&network.forwarding_secret, server.game_port);
-        let output = send_rcon_command("127.0.0.1", port, &password, command).await?;
-        Ok(if output.is_empty() {
-            "Command executed (no output).".into()
-        } else {
-            output
-        })
+        match send_rcon_command("127.0.0.1", port, &password, command).await {
+            Ok(output) => Ok(if output.is_empty() {
+                "Command executed (no output).".into()
+            } else {
+                output
+            }),
+            Err(_) => {
+                let managed = running
+                    .servers
+                    .get_mut(&server_id)
+                    .ok_or_else(|| Error::InvalidState("server process is not running".into()))?;
+                pumpkin_console_write(managed.stdin.as_mut(), command).await?;
+                Ok("Sent to Pumpkin console (RCON unavailable).".into())
+            }
+        }
     }
+}
+
+async fn pumpkin_console_write(stdin: Option<&mut ChildStdin>, command: &str) -> Result<()> {
+    let stdin = stdin
+        .ok_or_else(|| Error::Other("Pumpkin console stdin is not available".into()))?;
+    let line = if command.ends_with('\n') {
+        command.to_string()
+    } else {
+        format!("{command}\n")
+    };
+    stdin
+        .write_all(line.as_bytes())
+        .await
+        .map_err(|e| Error::Other(format!("failed to write to Pumpkin console: {e}")))?;
+    stdin
+        .flush()
+        .await
+        .map_err(|e| Error::Other(format!("failed to flush Pumpkin console: {e}")))?;
+    Ok(())
+}
+
+fn pumpkin_binary_for_server(
+    binaries: &HashMap<String, PathBuf>,
+    server: &ServerRecord,
+) -> Result<PathBuf> {
+    binaries
+        .get(&server.pumpkin_channel)
+        .cloned()
+        .ok_or_else(|| {
+            Error::Other(format!(
+                "no Pumpkin binary for channel \"{}\"",
+                server.pumpkin_channel
+            ))
+        })
 }
 
 fn spawn_pumpkin(
@@ -244,10 +365,11 @@ fn spawn_pumpkin(
 ) -> Result<ManagedPumpkin> {
     let mut cmd = Command::new(binary);
     cmd.current_dir(cwd)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take();
     pipe_logs(
         child.stdout.take(),
         network_id,
@@ -260,7 +382,7 @@ fn spawn_pumpkin(
         format!("pumpkin:{name}:err"),
         log_tx,
     );
-    Ok(ManagedPumpkin { child })
+    Ok(ManagedPumpkin { child, stdin })
 }
 
 fn spawn_velocity(

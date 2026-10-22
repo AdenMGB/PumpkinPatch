@@ -54,6 +54,18 @@ enabled = false
 enabled = true
 address = "{rcon_addr}"
 password = "{rcon_password}"
+
+# Pumpkin Patch bundled WASM — no interactive console for permission prompts
+[plugins]
+ask_permission_confirmation = false
+allow_unsigned = true
+verify_signatures = false
+
+[plugins.overrides.PatchPlan]
+allowed_permissions = ["fs.read.data", "fs.write.data"]
+
+[plugins.overrides.patch-hub-lobby]
+allowed_permissions = ["fs.read.data", "fs.write.data"]
 "#,
         bind = bind,
         secret = forwarding_secret,
@@ -93,13 +105,51 @@ fn apply_network_patch(root: &mut toml::Value, bind: &str, secret: &str, game_po
         &format!("127.0.0.1:{rcon_port}"),
     );
     set_nested_string(root, &["networking", "rcon", "password"], &rcon_password);
+    apply_plugins_patch(root);
     // Legacy mistaken paths from earlier Pumpkin Patch builds
     remove_legacy_advanced_networking(root);
+}
+
+/// Headless managed instances cannot answer plugin permission prompts on stdin.
+fn apply_plugins_patch(root: &mut toml::Value) {
+    set_nested_bool(root, &["plugins", "ask_permission_confirmation"], false);
+    set_nested_bool(root, &["plugins", "allow_unsigned"], true);
+    set_nested_bool(root, &["plugins", "verify_signatures"], false);
+    const FS_DATA: &[&str] = &["fs.read.data", "fs.write.data"];
+    for plugin in ["PatchPlan", "patch-hub-lobby"] {
+        set_nested_bool(root, &["plugins", "overrides", plugin, "enabled"], true);
+        set_nested_string_array(
+            root,
+            &["plugins", "overrides", plugin, "allowed_permissions"],
+            FS_DATA,
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugins_patch_auto_approves_patch_plan() {
+        let mut root = toml::Value::Table(toml::map::Map::new());
+        apply_plugins_patch(&mut root);
+        assert_eq!(
+            root.get("plugins")
+                .and_then(|p| p.get("ask_permission_confirmation"))
+                .and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            root.get("plugins")
+                .and_then(|p| p.get("overrides"))
+                .and_then(|o| o.get("PatchPlan"))
+                .and_then(|p| p.get("allowed_permissions"))
+                .and_then(|a| a.as_array())
+                .map(|a| a.len()),
+            Some(2)
+        );
+    }
 
     #[test]
     fn proxy_patch_disables_bedrock() {
@@ -136,6 +186,14 @@ fn set_nested_string(root: &mut toml::Value, path: &[&str], value: &str) {
 
 fn set_nested_bool(root: &mut toml::Value, path: &[&str], value: bool) {
     set_nested(root, path, toml::Value::Boolean(value));
+}
+
+fn set_nested_string_array(root: &mut toml::Value, path: &[&str], values: &[&str]) {
+    let arr: Vec<toml::Value> = values
+        .iter()
+        .map(|s| toml::Value::String((*s).to_string()))
+        .collect();
+    set_nested(root, path, toml::Value::Array(arr));
 }
 
 fn set_nested(root: &mut toml::Value, path: &[&str], value: toml::Value) {

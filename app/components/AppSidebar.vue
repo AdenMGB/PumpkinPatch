@@ -3,10 +3,12 @@ import {
   Squares2X2Icon,
   PlusCircleIcon,
   Cog6ToothIcon,
+  UsersIcon,
 } from '@heroicons/vue/24/outline'
 
 const links = [
   { to: '/library', label: 'Networks', icon: Squares2X2Icon },
+  { to: '/players', label: 'Players', icon: UsersIcon },
   { to: '/networks/new', label: 'Create', icon: PlusCircleIcon },
   { to: '/settings', label: 'Settings', icon: Cog6ToothIcon },
 ]

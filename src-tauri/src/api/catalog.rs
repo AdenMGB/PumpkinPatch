@@ -54,6 +54,7 @@ pub async fn modrinth_install_plugin(
 #[tauri::command]
 pub async fn pumpkin_market_list_plugins(
     search: Option<String>,
+    category: Option<String>,
     limit: Option<u32>,
     cursor: Option<String>,
 ) -> Result<PumpkinMarketListResult> {
@@ -61,6 +62,7 @@ pub async fn pumpkin_market_list_plugins(
     Ok(client
         .list_plugins(
             search.as_deref(),
+            category.as_deref(),
             limit.unwrap_or(12),
             cursor.as_deref(),
         )

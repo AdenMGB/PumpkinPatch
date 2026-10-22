@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/patch-core",
+    "crates/patch-plan-core",
     "plugins/patch-analytics-protocol",
     "plugins/patch-network-protocol",
     "plugins/patch-hub-lobby",

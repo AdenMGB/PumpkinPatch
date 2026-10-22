@@ -48,8 +48,9 @@ const saveMutation = useMutation({
   <PpCard padding="lg" class="hub-panel">
     <h2 class="section-title">Velocity hub</h2>
     <p class="pp-muted section-desc">
-      Public join proxy — edits <code class="pp-code">velocity.toml</code>. Restart the network to
-      apply bind changes.
+      Public join proxy — edits <code class="pp-code">velocity.toml</code>. Saving also updates
+      global Settings → bind host when the host part changes. Restart the network to apply listen
+      port changes.
     </p>
     <p v-if="isLoading" class="pp-muted">Loading hub settings…</p>
     <form v-else class="form-grid" @submit.prevent="saveMutation.mutate()">

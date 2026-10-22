@@ -1,4 +1,4 @@
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{NetworkRecord, ServerRecord};
 use patch_analytics_protocol::{
     config_file_path, export_file_path, verify_signed_export, AnalyticsPayload, PatchPlanConfig,
@@ -65,6 +65,9 @@ pub struct ServerAnalyticsSnapshot {
     pub recent_events: Vec<EventRow>,
     pub activity_samples: Vec<ActivityPoint>,
     pub stale: bool,
+    /// `ok` | `stale` | `missing` | `invalid`
+    pub export_status: String,
+    pub export_detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +91,10 @@ pub struct PlayerDetailRow {
     pub top_statistics: Vec<StatisticRow>,
     pub recent_advancements: Vec<String>,
     pub last_seen_unix: i64,
+    pub afk_time_secs: u64,
+    pub join_address: String,
+    pub activity_index: f64,
+    pub activity_group: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +126,7 @@ pub fn write_patch_plan_config(
     server: &ServerRecord,
     network_id: Uuid,
     export_secret: &str,
+    default_join_address: &str,
 ) -> Result<()> {
     let dir = patch_analytics_protocol::export_data_dir(instance_path);
     std::fs::create_dir_all(&dir)?;
@@ -128,6 +136,7 @@ pub fn write_patch_plan_config(
         server_name: server.name.clone(),
         network_id: network_id.to_string(),
         export_secret: export_secret.to_string(),
+        default_join_address: default_join_address.to_string(),
     };
     let path = config_file_path(instance_path);
     let json = serde_json::to_string_pretty(&config)?;
@@ -145,12 +154,45 @@ pub fn read_server_analytics(
 ) -> Result<ServerAnalyticsSnapshot> {
     let path = export_file_path(instance_path);
     if !path.exists() {
-        return Ok(empty_snapshot(instance_path, server_name, true));
+        let detail = if config_file_path(instance_path).exists() {
+            Some(
+                "export.json missing — Patch Plan WASM probably did not load. Rebuild plugins \
+                (npm run build:plugins), use Install Plan on backends, then restart the server. \
+                Check latest.log for WASM API version errors."
+                    .into(),
+            )
+        } else {
+            Some(
+                "Patch Plan is not configured on this instance. Use Install Plan on backends."
+                    .into(),
+            )
+        };
+        return Ok(empty_snapshot(instance_path, server_name, true, "missing", detail));
     }
     let raw = std::fs::read_to_string(&path)?;
-    let signed: SignedExport = serde_json::from_str(&raw)?;
-    verify_signed_export(&signed, export_secret)
-        .map_err(|e| Error::InvalidState(e))?;
+    let signed: SignedExport = match serde_json::from_str(&raw) {
+        Ok(s) => s,
+        Err(e) => {
+            return Ok(empty_snapshot(
+                instance_path,
+                server_name,
+                true,
+                "invalid",
+                Some(format!("export.json is not valid signed JSON: {e}")),
+            ));
+        }
+    };
+    if let Err(e) = verify_signed_export(&signed, export_secret) {
+        return Ok(empty_snapshot(
+            instance_path,
+            server_name,
+            true,
+            "invalid",
+            Some(format!(
+                "{e} — click Install Plan on backends to refresh patch-config.json, then restart."
+            )),
+        ));
+    }
     payload_to_snapshot(&signed.payload, server_name, max_age_secs)
 }
 
@@ -167,7 +209,16 @@ pub fn aggregate_network_analytics(
             export_secret,
             &server.name,
             max_age,
-        )?;
+        )
+        .unwrap_or_else(|e| {
+            empty_snapshot(
+                Path::new(&server.data_path),
+                &server.name,
+                true,
+                "invalid",
+                Some(e.to_string()),
+            )
+        });
         snapshots.push(snap);
     }
 
@@ -246,6 +297,7 @@ fn payload_to_snapshot(
     top_players.sort_by(|a, b| b.playtime_secs.cmp(&a.playtime_secs));
     top_players.truncate(50);
 
+    let export_status = if stale { "stale" } else { "ok" };
     Ok(ServerAnalyticsSnapshot {
         server_id: payload.server_id.clone(),
         server_name: payload.server_name.clone(),
@@ -289,12 +341,34 @@ fn payload_to_snapshot(
             })
             .collect(),
         stale,
+        export_status: export_status.to_string(),
+        export_detail: None,
     })
 }
 
 fn player_detail_from_stats(
     p: &patch_analytics_protocol::PlayerStats,
 ) -> PlayerDetailRow {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let session_triples: Vec<(i64, i64, u64)> = p
+        .completed_sessions
+        .iter()
+        .map(|s| {
+            (
+                s.start_unix * 1000,
+                s.end_unix * 1000,
+                s.afk_secs * 1000,
+            )
+        })
+        .collect();
+    let (w1, w2, w3) = patch_plan_core::active_playtime_in_weeks(&session_triples, now_ms);
+    let ai = patch_plan_core::ActivityIndex::calculate(
+        w1,
+        w2,
+        w3,
+        patch_plan_core::DEFAULT_PLAYTIME_THRESHOLD_MS,
+    );
+
     PlayerDetailRow {
         uuid: p.uuid.clone(),
         name: p.name.clone(),
@@ -315,6 +389,10 @@ fn player_detail_from_stats(
         top_statistics: top_stats_from_map(&p.statistic_totals, 12),
         recent_advancements: p.recent_advancements.clone(),
         last_seen_unix: p.last_seen_unix,
+        afk_time_secs: p.afk_time_secs,
+        join_address: p.join_address.clone(),
+        activity_index: ai.value,
+        activity_group: ai.group.label().to_string(),
     }
 }
 
@@ -347,9 +425,20 @@ fn top_stats_from_map(map: &HashMap<String, u64>, limit: usize) -> Vec<Statistic
     rows
 }
 
-fn empty_snapshot(instance_path: &Path, server_name: &str, stale: bool) -> ServerAnalyticsSnapshot {
+fn empty_snapshot(
+    instance_path: &Path,
+    server_name: &str,
+    stale: bool,
+    export_status: &str,
+    export_detail: Option<String>,
+) -> ServerAnalyticsSnapshot {
+    let server_id = std::fs::read_to_string(config_file_path(instance_path))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<PatchPlanConfig>(&raw).ok())
+        .map(|c| c.server_id)
+        .unwrap_or_default();
     ServerAnalyticsSnapshot {
-        server_id: String::new(),
+        server_id,
         server_name: server_name.to_string(),
         generated_at_unix: 0,
         online_now: 0,
@@ -363,6 +452,8 @@ fn empty_snapshot(instance_path: &Path, server_name: &str, stale: bool) -> Serve
         recent_events: vec![],
         activity_samples: vec![],
         stale,
+        export_status: export_status.to_string(),
+        export_detail,
     }
 }
 

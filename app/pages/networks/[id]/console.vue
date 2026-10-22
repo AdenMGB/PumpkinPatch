@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useMutation, useQuery } from '@tanstack/vue-query'
-import { networkLogs, pushNetworkLog } from '~/plugins/patch-init.client'
+import { mergePersistedLogs, networkLogs, pushNetworkLog } from '~/plugins/patch-init.client'
 
 const route = useRoute()
 const api = usePatchApi()
@@ -13,6 +13,15 @@ const consoleRef = ref<HTMLElement | null>(null)
 const { data: network } = useQuery({
   queryKey: ['network', id],
   queryFn: () => api.networkGet(id.value),
+})
+
+onMounted(async () => {
+  try {
+    const persisted = await api.networkLogsGet(id.value, 1500)
+    mergePersistedLogs(persisted)
+  } catch {
+    /* browser dev */
+  }
 })
 
 const targets = computed(() => {

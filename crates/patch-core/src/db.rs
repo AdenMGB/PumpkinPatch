@@ -52,6 +52,12 @@ pub struct Database {
 }
 
 impl Database {
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+}
+
+impl Database {
     pub async fn connect(db_path: &Path) -> Result<Self> {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -64,6 +70,7 @@ impl Database {
             .connect_with(opts)
             .await?;
         sqlx::raw_sql(MIGRATION).execute(&pool).await?;
+        crate::plan_store::ensure_plan_schema(&pool).await?;
         let _ = sqlx::query(
             "ALTER TABLE servers ADD COLUMN minecraft_version TEXT NOT NULL DEFAULT '1.21.4'",
         )
@@ -164,6 +171,15 @@ impl Database {
         Ok(())
     }
 
+    pub async fn update_server_pumpkin_channel(&self, id: Uuid, channel: &str) -> Result<()> {
+        sqlx::query("UPDATE servers SET pumpkin_channel = ? WHERE id = ?")
+            .bind(channel)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_server_minecraft_version(
         &self,
         id: Uuid,
@@ -215,6 +231,27 @@ impl Database {
             .execute(&self.pool)
             .await?;
         Ok(token)
+    }
+
+    pub async fn record_plugin_deployment(
+        &self,
+        plugin_id: &str,
+        instance_path: &str,
+        artifact_path: &str,
+    ) -> Result<()> {
+        let id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO deployed_plugins (id, plugin_id, instance_path, artifact_path, deployed_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(id.to_string())
+        .bind(plugin_id)
+        .bind(instance_path)
+        .bind(artifact_path)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn save_settings(&self, settings: &AppSettings) -> Result<()> {
