@@ -21,7 +21,8 @@ use patch_core::{
     write_disk_cache, PlanJsonCache,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     plan_theme_json_db, save_plan_theme_json,
-    player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
+    player_profile_v1, player_versus_v1, playerbase_overview_v1,
+    players_table_v1, players_v1, statistics_v1,
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, with_plan_cache,
     PlanQueryRequest,
 };
@@ -844,9 +845,18 @@ async fn online_insights(
 }
 
 async fn statistics(State(st): State<PlanHttpState>, Query(q): Query<ServerQuery>) -> impl IntoResponse {
-    let _aggregate = q.aggregate.unwrap_or(false);
-    let _server = q.server.as_deref();
-    Json(serde_json::json!({ "statistics": [] })).into_response()
+    let aggregate = q.aggregate.unwrap_or(false);
+    match statistics_v1(
+        &st.pool,
+        &st.network_id,
+        q.server.as_deref(),
+        aggregate,
+    )
+    .await
+    {
+        Ok(rows) => Json(rows).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn game_allowlist_bounces() -> impl IntoResponse {

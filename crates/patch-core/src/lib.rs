@@ -51,7 +51,8 @@ pub use analytics::{
 pub use plan_store::ensure_plan_schema;
 pub use plan_store::{
     graph_players_online, list_command_usages, list_kills, list_players_table, list_sessions,
-    players_online_at, PlanPlayerOnlineName,
+    players_online_at, player_statistics_map, statistics_v1, PlanPlayerOnlineName,
+    PlanStatisticsServerRow,
     list_join_addresses, network_overview_v1, ping_table_v1, player_gdpr_export_json,
     player_profile_v1, player_versus_v1,
     server_overview_v1, sessions_overview_v1, PlanJoinAddressRow, PlanSessionsOverviewV1,

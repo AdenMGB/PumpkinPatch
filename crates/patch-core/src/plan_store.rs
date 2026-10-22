@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 use patch_analytics_protocol::{
     AnalyticsPayload, PerformanceSample, PlayerStats, PvpKillRecord, SessionRecord,
 };
+use std::collections::HashMap;
 use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -63,6 +64,24 @@ CREATE TABLE IF NOT EXISTS plan_commandusages (
     times_used INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE,
     UNIQUE (server_id, command)
+);
+
+CREATE TABLE IF NOT EXISTS plan_statistic_totals (
+    server_id INTEGER NOT NULL,
+    statistic_id TEXT NOT NULL,
+    value INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, statistic_id),
+    FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plan_user_statistic_totals (
+    user_id INTEGER NOT NULL,
+    server_id INTEGER NOT NULL,
+    statistic_id TEXT NOT NULL,
+    value INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, server_id, statistic_id),
+    FOREIGN KEY (user_id) REFERENCES plan_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS plan_tps (
@@ -309,7 +328,11 @@ pub async fn ingest_payload(
                 }
             }
         }
+
+        merge_user_statistics(pool, user_id, server_id, &player.statistic_totals).await?;
     }
+
+    merge_server_statistics(pool, server_id, &payload.server_totals.statistic_totals).await?;
 
     for kill in &payload.recent_pvp_kills {
         if insert_kill(pool, &server_uuid, kill).await? {
@@ -335,6 +358,157 @@ pub async fn ingest_payload(
     }
 
     Ok(report)
+}
+
+async fn merge_server_statistics(
+    pool: &SqlitePool,
+    server_id: i64,
+    stats: &HashMap<String, u64>,
+) -> Result<()> {
+    for (statistic_id, value) in stats {
+        sqlx::query(
+            "INSERT INTO plan_statistic_totals (server_id, statistic_id, value) VALUES (?, ?, ?)
+             ON CONFLICT(server_id, statistic_id) DO UPDATE SET
+               value = MAX(plan_statistic_totals.value, excluded.value)",
+        )
+        .bind(server_id)
+        .bind(statistic_id)
+        .bind(*value as i64)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn merge_user_statistics(
+    pool: &SqlitePool,
+    user_id: i64,
+    server_id: i64,
+    stats: &HashMap<String, u64>,
+) -> Result<()> {
+    for (statistic_id, value) in stats {
+        sqlx::query(
+            "INSERT INTO plan_user_statistic_totals (user_id, server_id, statistic_id, value)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id, server_id, statistic_id) DO UPDATE SET
+               value = MAX(plan_user_statistic_totals.value, excluded.value)",
+        )
+        .bind(user_id)
+        .bind(server_id)
+        .bind(statistic_id)
+        .bind(*value as i64)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStatisticsServerRow {
+    #[serde(rename = "serverUUID")]
+    pub server_uuid: Option<String>,
+    pub statistics: HashMap<String, u64>,
+}
+
+/// Plan React `StatisticsTable` payload (`GET /v1/statistics`).
+pub async fn statistics_v1(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuid: Option<&str>,
+    aggregate: bool,
+) -> Result<Vec<PlanStatisticsServerRow>> {
+    if let Some(uuid) = server_uuid {
+        let rows = sqlx::query(
+            "SELECT s.uuid, st.statistic_id, st.value
+             FROM plan_statistic_totals st
+             JOIN plan_servers s ON s.id = st.server_id
+             WHERE s.network_id = ? AND s.uuid = ?",
+        )
+        .bind(network_id)
+        .bind(uuid)
+        .fetch_all(pool)
+        .await?;
+        let mut statistics = HashMap::new();
+        for row in rows {
+            statistics.insert(
+                row.get::<String, _>("statistic_id"),
+                row.get::<i64, _>("value") as u64,
+            );
+        }
+        return Ok(vec![PlanStatisticsServerRow {
+            server_uuid: Some(uuid.to_string()),
+            statistics,
+        }]);
+    }
+
+    let rows = sqlx::query(
+        "SELECT s.uuid, st.statistic_id, st.value
+         FROM plan_statistic_totals st
+         JOIN plan_servers s ON s.id = st.server_id
+         WHERE s.network_id = ?",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+
+    if aggregate {
+        let mut statistics = HashMap::new();
+        for row in rows {
+            let id = row.get::<String, _>("statistic_id");
+            let value = row.get::<i64, _>("value") as u64;
+            statistics
+                .entry(id)
+                .and_modify(|v: &mut u64| *v += value)
+                .or_insert(value);
+        }
+        return Ok(vec![PlanStatisticsServerRow {
+            server_uuid: None,
+            statistics,
+        }]);
+    }
+
+    let mut by_server: HashMap<String, HashMap<String, u64>> = HashMap::new();
+    for row in rows {
+        let uuid = row.get::<String, _>("uuid");
+        let id = row.get::<String, _>("statistic_id");
+        let value = row.get::<i64, _>("value") as u64;
+        by_server.entry(uuid).or_default().insert(id, value);
+    }
+    Ok(by_server
+        .into_iter()
+        .map(|(uuid, statistics)| PlanStatisticsServerRow {
+            server_uuid: Some(uuid),
+            statistics,
+        })
+        .collect())
+}
+
+pub async fn player_statistics_map(
+    pool: &SqlitePool,
+    network_id: &str,
+    player_uuid: &str,
+) -> Result<HashMap<String, u64>> {
+    let rows = sqlx::query(
+        "SELECT ust.statistic_id, SUM(ust.value) AS value
+         FROM plan_user_statistic_totals ust
+         JOIN plan_users u ON u.id = ust.user_id
+         JOIN plan_servers s ON s.id = ust.server_id
+         WHERE u.uuid = ? AND s.network_id = ?
+         GROUP BY ust.statistic_id",
+    )
+    .bind(player_uuid)
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            (
+                row.get::<String, _>("statistic_id"),
+                row.get::<i64, _>("value") as u64,
+            )
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone)]
@@ -1742,6 +1916,8 @@ pub struct PlanPlayerWorldSlice {
 pub struct PlanPlayerProfileV1 {
     pub info: PlanPlayerTableRow,
     pub stats: PlanPlayerProfileStats,
+    #[serde(default)]
+    pub statistics: HashMap<String, u64>,
     pub nicknames: Vec<PlanPlayerNicknameRow>,
     pub connections: Vec<PlanPlayerConnectionRow>,
     pub punchcard_series: Vec<PlanPlayerPunchcardPoint>,
@@ -1789,10 +1965,12 @@ pub async fn player_profile_v1(
     let punchcard_series = player_punchcard_from_sessions(&session_rows);
     let world_pie_series = player_world_pie_from_sessions(&session_rows);
     let server_pie_series = player_server_pie_from_sessions(&session_rows);
+    let statistics = player_statistics_map(pool, network_id, player_uuid).await?;
 
     Ok(PlanPlayerProfileV1 {
         info,
         stats,
+        statistics,
         nicknames,
         connections,
         punchcard_series,
@@ -2328,6 +2506,41 @@ mod ingest_tests {
         assert_eq!(ping_table.len(), 1);
         assert_eq!(ping_table[0].country, "Local Machine");
         assert_eq!(ping_table[0].avg_ping, 42);
+    }
+
+    #[tokio::test]
+    async fn statistics_survive_ingest_and_statistics_v1() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory db");
+        ensure_plan_schema(&pool).await.expect("schema");
+        let mut payload = sample_payload();
+        payload
+            .server_totals
+            .statistic_totals
+            .insert("minecraft:custom:jump".into(), 42);
+        payload.players[0]
+            .statistic_totals
+            .insert("minecraft:custom:walk_one_cm".into(), 1000);
+        ingest_payload(&pool, "net-1", &payload)
+            .await
+            .expect("ingest");
+        let rows = statistics_v1(&pool, "net-1", Some("srv-uuid-1"), false)
+            .await
+            .expect("stats");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].statistics.get("minecraft:custom:jump"),
+            Some(&42)
+        );
+        let player_stats = player_statistics_map(&pool, "net-1", "player-uuid-1")
+            .await
+            .expect("player stats");
+        assert_eq!(
+            player_stats.get("minecraft:custom:walk_one_cm"),
+            Some(&1000)
+        );
     }
 
     #[test]
