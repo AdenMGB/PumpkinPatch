@@ -144,6 +144,48 @@ impl PlanDataExtension for HarvestMetricsExtension {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtensionQueryProvider {
+    pub plugin: String,
+    pub provider: String,
+    pub value_type: String,
+}
+
+fn value_type_label(value: &Value) -> &'static str {
+    if value.is_boolean() {
+        "boolean"
+    } else if value.is_number() {
+        "number"
+    } else {
+        "string"
+    }
+}
+
+/// Providers exposed to Plan `/query` extension filter UI (`pluginsBooleanGroups` / `pluginNumbers`).
+pub fn extension_filter_provider_catalog() -> Vec<ExtensionQueryProvider> {
+    ensure_builtin_extensions();
+    let reg = registry().read().expect("extension registry lock");
+    let mut out = Vec::new();
+    for ext in &reg.extensions {
+        let plugin = ext.plugin_name().to_string();
+        for v in ext.provide_server_data() {
+            out.push(ExtensionQueryProvider {
+                plugin: plugin.clone(),
+                provider: v.key.clone(),
+                value_type: value_type_label(&v.value).to_string(),
+            });
+        }
+        for v in ext.provide_player_data("00000000-0000-0000-0000-000000000001") {
+            out.push(ExtensionQueryProvider {
+                plugin: plugin.clone(),
+                provider: v.key.clone(),
+                value_type: value_type_label(&v.value).to_string(),
+            });
+        }
+    }
+    out
+}
+
 pub fn ensure_builtin_extensions() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(|| {
@@ -300,6 +342,16 @@ mod extension_query_tests {
         };
         assert!(boolean_group_filter_matches("uuid-1", &filter, &[ext]));
         assert!(!boolean_group_filter_matches("", &filter, &[ext]));
+    }
+
+    #[test]
+    fn catalog_lists_harvest_metrics_providers() {
+        let providers = extension_filter_provider_catalog();
+        assert!(
+            providers
+                .iter()
+                .any(|p| p.plugin == "HarvestMetrics" && p.provider == "profile_linked")
+        );
     }
 
     #[test]

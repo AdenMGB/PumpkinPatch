@@ -508,11 +508,25 @@ export interface PlanFilterTypeInfo {
   implemented: boolean
 }
 
+export interface PlanExtensionQueryProvider {
+  plugin: string
+  provider: string
+  value_type: string
+}
+
 export interface PlanFiltersCatalog {
   activity_groups: string[]
   join_addresses: string[]
   geolocations: string[]
   filter_types: PlanFilterTypeInfo[]
+  extension_providers?: PlanExtensionQueryProvider[]
+}
+
+export interface GourdPoolScaleRecommendRequest {
+  current_ccu: number
+  active_backends: number
+  players_per_backend: number
+  hidden_ready: number
 }
 
 export interface PlanQueryRequest {

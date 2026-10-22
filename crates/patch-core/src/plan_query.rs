@@ -18,6 +18,8 @@ pub struct PlanFiltersCatalog {
     pub join_addresses: Vec<String>,
     pub geolocations: Vec<String>,
     pub filter_types: Vec<PlanFilterTypeInfo>,
+    #[serde(default)]
+    pub extension_providers: Vec<crate::plan_extension::ExtensionQueryProvider>,
 }
 
 const QUERY_CACHE_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -211,6 +213,11 @@ pub async fn plan_filters_catalog(
             implemented: true,
         },
         PlanFilterTypeInfo {
+            id: "playedOnServer".into(),
+            label: "Played on server(s)".into(),
+            implemented: true,
+        },
+        PlanFilterTypeInfo {
             id: "banned".into(),
             label: "Ban status".into(),
             implemented: true,
@@ -237,11 +244,15 @@ pub async fn plan_filters_catalog(
         },
     ];
 
+    crate::plan_extension::ensure_builtin_extensions();
+    let extension_providers = crate::plan_extension::extension_filter_provider_catalog();
+
     Ok(PlanFiltersCatalog {
         activity_groups: groups,
         join_addresses,
         geolocations,
         filter_types,
+        extension_providers,
     })
 }
 
@@ -350,6 +361,9 @@ async fn run_plan_query_uncached(
     if request.played_after_ms.is_some() || request.played_before_ms.is_some() {
         let active = uuids_played_between(pool, network_id, server_uuid, request).await?;
         players.retain(|p| active.contains(&p.uuid));
+    } else if !request.played_server_uuids.is_empty() {
+        let active = uuids_played_on_servers(pool, network_id, &request.played_server_uuids).await?;
+        players.retain(|p| active.contains(&p.uuid));
     }
 
     let matched_count = players.len() as u64;
@@ -392,6 +406,36 @@ async fn run_plan_query_uncached(
         from_cache: false,
         cohort_view,
     })
+}
+
+async fn uuids_played_on_servers(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuids: &[String],
+) -> Result<std::collections::HashSet<String>> {
+    if server_uuids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let placeholders = server_uuids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT DISTINCT u.uuid FROM plan_sessions sess
+         JOIN plan_users u ON u.id = sess.user_id
+         JOIN plan_servers s ON s.id = sess.server_id
+         WHERE s.network_id = ? AND s.uuid IN ({placeholders})"
+    );
+    let mut query = sqlx::query(&sql).bind(network_id);
+    for uuid in server_uuids {
+        query = query.bind(uuid);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows
+        .iter()
+        .map(|r| r.get::<String, _>("uuid"))
+        .collect())
 }
 
 async fn uuids_played_between(
@@ -853,6 +897,45 @@ mod tests {
         let triples = vec![(at_ms - 86_400_000, at_ms - 43_200_000, 0)];
         let ai = activity_index_at_ms(&triples, at_ms);
         assert!(ai.value > 0.0);
+    }
+
+    #[tokio::test]
+    async fn played_on_server_filter_limits_cohort() {
+        use crate::plan_store::ensure_plan_schema;
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory sqlite");
+        ensure_plan_schema(&pool).await.expect("schema");
+        sqlx::query(
+            "INSERT INTO plan_servers (uuid, network_id, name) VALUES ('srv-a', 'net', 'A'), ('srv-b', 'net', 'B')",
+        )
+        .execute(&pool)
+        .await
+        .expect("servers");
+        sqlx::query(
+            "INSERT INTO plan_users (uuid, registered, name) VALUES ('u1', 1, 'OnA'), ('u2', 1, 'OnB')",
+        )
+        .execute(&pool)
+        .await
+        .expect("users");
+        sqlx::query(
+            "INSERT INTO plan_sessions (user_id, server_id, session_start, session_end)
+             VALUES (1, 1, 1000, 2000), (2, 2, 1000, 2000)",
+        )
+        .execute(&pool)
+        .await
+        .expect("sessions");
+        let req = PlanQueryRequest {
+            played_server_uuids: vec!["srv-a".into()],
+            ..PlanQueryRequest::default()
+        };
+        let result = execute_plan_query(&pool, "net", None, &req)
+            .await
+            .expect("query");
+        assert_eq!(result.matched_count, 1);
+        assert_eq!(result.players[0].name, "OnA");
     }
 
     #[tokio::test]

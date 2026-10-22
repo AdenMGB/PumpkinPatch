@@ -15,6 +15,7 @@ mod plan_sync;
 mod plan_auth;
 mod plan_web_groups;
 mod plan_extension;
+mod plan_data_clear;
 mod plan_export;
 mod plan_theme;
 mod orchestration;
@@ -85,9 +86,13 @@ pub use plan_query::{
     ActivityIndexOnFilter, PlanFilterTypeInfo, PlanFiltersCatalog, PlanQueryCohortView,
     PlanQueryRequest, PlanQueryResult,
 };
+pub use plan_data_clear::{
+    plan_data_clear_events_since, record_plan_player_data_cleared, PlanDataClearEvent,
+};
 pub use plan_extension::{
     ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,
-    PlanExtensionPlugin, PlanExtensionTab, PluginBooleanGroupFilter, PluginNumberFilter,
+    PlanExtensionPlugin, PlanExtensionTab, ExtensionQueryProvider, PluginBooleanGroupFilter,
+    PluginNumberFilter,
 };
 pub use plan_auth::{
     complete_web_registration, delete_web_user, list_web_users, log_access as plan_log_access,

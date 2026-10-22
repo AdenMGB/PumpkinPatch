@@ -16,6 +16,10 @@ const topology = ref<Awaited<ReturnType<typeof api.networkTopologyGet>> | null>(
 const message = ref('')
 const loading = ref(true)
 const poolState = ref('active')
+const playersPerBackend = ref(40)
+const hiddenReady = ref(1)
+const scalePromote = ref<number | null>(null)
+const scaleLoading = ref(false)
 
 const nodes = computed(() => {
   if (!topology.value) return []
@@ -59,9 +63,32 @@ async function onConnect(params: Connection) {
   }
 }
 
+async function refreshPoolScaleHint() {
+  scaleLoading.value = true
+  try {
+    const [overview, topo] = await Promise.all([
+      api.analyticsNetworkOverview(networkId.value),
+      api.networkTopologyGet(networkId.value),
+    ])
+    topology.value = topo
+    const activeBackends = topo.nodes.filter((n) => n.kind === 'backend').length
+    scalePromote.value = await api.gourdPoolScaleRecommend({
+      current_ccu: overview.combined_online,
+      active_backends: Math.max(1, activeBackends),
+      players_per_backend: playersPerBackend.value,
+      hidden_ready: hiddenReady.value,
+    })
+  } catch (e) {
+    message.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    scaleLoading.value = false
+  }
+}
+
 onMounted(async () => {
   try {
     topology.value = await api.networkTopologyGet(networkId.value)
+    await refreshPoolScaleHint()
   } finally {
     loading.value = false
   }
@@ -90,6 +117,23 @@ onMounted(async () => {
           <option value="draining">draining</option>
         </select>
       </label>
+      <div class="topology-scale pp-muted">
+        <span>Predictive scale (plangem §3.3)</span>
+        <label>
+          Players / backend
+          <input v-model.number="playersPerBackend" type="number" min="1" max="500" />
+        </label>
+        <label>
+          Hidden-ready spares
+          <input v-model.number="hiddenReady" type="number" min="0" max="32" />
+        </label>
+        <button type="button" class="pp-btn pp-btn--secondary" :disabled="scaleLoading" @click="refreshPoolScaleHint">
+          {{ scaleLoading ? 'Calculating…' : 'Recalculate' }}
+        </button>
+        <p v-if="scalePromote !== null && !scaleLoading" class="topology-scale-hint">
+          Promote up to <strong>{{ scalePromote }}</strong> hidden-ready backend(s) for current CCU.
+        </p>
+      </div>
       <p v-if="message" class="topology-msg">{{ message }}</p>
     </template>
     <ClientOnly>

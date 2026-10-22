@@ -4998,6 +4998,8 @@ name = "stem-agent"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "gourd-proxy",
+ "serde",
  "serde_json",
  "tokio",
  "vineyard-bus",
