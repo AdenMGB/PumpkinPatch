@@ -1,6 +1,7 @@
 //! Embedded Plan-shaped HTTP API for external dashboards (indepth.md §5.3).
 
 mod auth_layer;
+mod plan_react;
 mod react_compat;
 
 use axum::{
@@ -79,7 +80,8 @@ pub fn router(state: PlanHttpState) -> Router {
         ))
         .with_state(state.clone());
 
-    let mut router = Router::new()
+    let mut router = {
+        let r = Router::new()
         .route("/v1/serverOverview", get(server_overview))
         .route("/v1/onlineOverview", get(online_overview))
         .route("/v1/sessionsOverview", get(sessions_overview))
@@ -115,18 +117,24 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/statistics", get(statistics_stub))
         .route("/v1/gameAllowlistBounces", get(game_allowlist_bounces_stub))
         .route("/", get(plan_dashboard_redirect))
-        .route("/query", get(plan_query_redirect))
         .route("/app", get(plan_embedded_app))
-        .route("/app/", get(plan_embedded_app))
-        .route("/register", get(plan_register_page))
-        .route("/theme-editor", get(plan_theme_editor_page))
-        .route("/manage", get(plan_manage_page))
-        .route("/v1/theme", get(theme).post(theme_save))
-        .route("/v1/auth/login", post(auth_login))
-        .route("/v1/auth/register", post(auth_register))
-        .merge(session_protected)
-        .merge(admin_protected)
-        .with_state(state);
+        .route("/app/", get(plan_embedded_app));
+        let r = plan_react::wrap_public_routes(r);
+        let r = if plan_react::plan_react_available() {
+            r
+        } else {
+            r.route("/query", get(plan_query_redirect))
+                .route("/register", get(plan_register_page))
+                .route("/theme-editor", get(plan_theme_editor_page))
+                .route("/manage", get(plan_manage_page))
+        };
+        r.route("/v1/theme", get(theme).post(theme_save))
+            .route("/v1/auth/login", post(auth_login))
+            .route("/v1/auth/register", post(auth_register))
+            .merge(session_protected)
+            .merge(admin_protected)
+            .with_state(state)
+    };
     if let Some(dir) = export_dir {
         if dir.exists() {
             router = router.nest_service("/export", ServeDir::new(dir));
@@ -137,27 +145,6 @@ pub fn router(state: PlanHttpState) -> Router {
         router = router.nest_service("/static", ServeDir::new(react_static));
     }
     router
-}
-
-async fn serve_plan_react_asset(name: &'static str) -> impl IntoResponse {
-    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static/plan-react").join(name);
-    match tokio::fs::read(&file).await {
-        Ok(bytes) => {
-            let ctype = match file.extension().and_then(|e| e.to_str()) {
-                Some("js") => "application/javascript; charset=utf-8",
-                Some("css") => "text/css; charset=utf-8",
-                Some("json") => "application/json; charset=utf-8",
-                Some("ico") => "image/x-icon",
-                _ => "text/html; charset=utf-8",
-            };
-            (
-                [(axum::http::header::CONTENT_TYPE, ctype)],
-                bytes,
-            )
-                .into_response()
-        }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
 }
 
 #[derive(Deserialize)]
@@ -251,9 +238,8 @@ async fn capabilities() -> impl IntoResponse {
 }
 
 async fn plan_dashboard_redirect() -> axum::response::Response {
-    let react_index = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static/plan-react/index.html");
-    if react_index.exists() {
-        return serve_plan_react_asset("index.html").await.into_response();
+    if plan_react::plan_react_available() {
+        return plan_react::serve_plan_react_asset("index.html").await;
     }
     (
         StatusCode::TEMPORARY_REDIRECT,
@@ -897,5 +883,59 @@ async fn theme(State(st): State<PlanHttpState>, Query(q): Query<ServerQuery>) ->
     match plan_theme_json_db(&st.pool, name).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use patch_core::ensure_plan_schema;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn test_state() -> PlanHttpState {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("pool");
+        ensure_plan_schema(&pool).await.expect("schema");
+        PlanHttpState {
+            network_id: "test-net".into(),
+            pool,
+            online_by_server: Arc::new(HashMap::new()),
+            static_export_dir: None,
+            json_cache: PlanJsonCache::new(),
+            export_secret: "test-secret".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn spa_login_returns_html_when_react_bundle_present() {
+        if !plan_react::plan_react_available() {
+            return;
+        }
+        let app = router(test_state().await);
+        let response = app
+            .oneshot(Request::get("/login").body(Body::empty()).unwrap())
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("<!DOCTYPE html") || html.contains("<html"));
+    }
+
+    #[tokio::test]
+    async fn capabilities_endpoint_returns_json() {
+        let app = router(test_state().await);
+        let response = app
+            .oneshot(Request::get("/v1/capabilities").body(Body::empty()).unwrap())
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }
