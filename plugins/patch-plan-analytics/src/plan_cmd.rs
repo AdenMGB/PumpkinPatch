@@ -135,6 +135,30 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         CommandNode::argument("file", &ArgumentType::String(StringType::Greedy))
                             .execute(DbRestoreHandler),
                     ),
+                )
+                .then(
+                    CommandNode::literal("move").then(
+                        CommandNode::argument("from", &ArgumentType::String(StringType::Word))
+                            .then(
+                                CommandNode::argument("to", &ArgumentType::String(StringType::Word))
+                                    .execute(DbMoveHandler),
+                            ),
+                    ),
+                )
+                .then(
+                    CommandNode::literal("merge").then(
+                        CommandNode::argument("from", &ArgumentType::String(StringType::Word))
+                            .then(
+                                CommandNode::argument("to", &ArgumentType::String(StringType::Word))
+                                    .execute(DbMergeHandler),
+                            ),
+                    ),
+                )
+                .then(
+                    CommandNode::literal("hotswap").then(
+                        CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
+                            .execute(DbHotswapHandler),
+                    ),
                 ),
         )
         .then(literal_aliases("accept", &["yes", "y"], AcceptDbHandler))
@@ -1098,6 +1122,85 @@ impl CommandHandler for DbUninstalledHandler {
     }
 }
 
+struct DbMoveHandler;
+
+impl CommandHandler for DbMoveHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let from = match args.get_value("from") {
+            Arg::Simple(s) => s,
+            _ => "sqlite",
+        };
+        let to = match args.get_value("to") {
+            Arg::Simple(s) => s,
+            _ => "mysql",
+        };
+        eprintln!(
+            "[Patch Plan] db move {from} -> {to}: Pumpkin Patch uses a single desktop SQLite Plan store; use import/export or desktop tools for migration."
+        );
+        Ok(1)
+    }
+}
+
+struct DbMergeHandler;
+
+impl CommandHandler for DbMergeHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let from = match args.get_value("from") {
+            Arg::Simple(s) => s,
+            _ => "sqlite",
+        };
+        let to = match args.get_value("to") {
+            Arg::Simple(s) => s,
+            _ => "sqlite",
+        };
+        eprintln!(
+            "[Patch Plan] db merge {from} into {to}: use desktop Import after exporting signed bundles from each server."
+        );
+        Ok(1)
+    }
+}
+
+struct DbHotswapHandler;
+
+impl CommandHandler for DbHotswapHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let db_type = match args.get_value("db_type") {
+            Arg::Simple(s) => s,
+            _ => "sqlite",
+        };
+        if db_type.eq_ignore_ascii_case("sqlite") {
+            let _ = with_runtime(|rt| {
+                reload_config_from_disk(rt).ok();
+                persist_state(rt).ok();
+            });
+            eprintln!("[Patch Plan] db hotswap sqlite: reloaded config for this server instance.");
+        } else {
+            eprintln!(
+                "[Patch Plan] db hotswap {db_type}: only SQLite is supported on Pumpkin Patch; MySQL/H2 are not available."
+            );
+        }
+        Ok(1)
+    }
+}
+
 struct ImportHandler;
 
 impl CommandHandler for ImportHandler {
@@ -1108,7 +1211,9 @@ impl CommandHandler for ImportHandler {
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         require_console(&sender)?;
-        let _ = sender;
+        eprintln!(
+            "[Patch Plan] import: use Pumpkin Patch desktop Analytics → Import signed export.json, or POST /v1/import on Plan HTTP after sync."
+        );
         Ok(1)
     }
 }
