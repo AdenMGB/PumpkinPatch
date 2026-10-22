@@ -29,6 +29,28 @@ pub struct PlanPlaceholderContext {
     pub now_ms: i64,
     pub avg_tps_day: Option<f64>,
     pub avg_ping_day: Option<f64>,
+    pub avg_ping_week: Option<f64>,
+    pub avg_ping_month: Option<f64>,
+    pub min_ping_day: Option<u32>,
+    pub max_ping_day: Option<u32>,
+    pub player_ping_avg: Option<f64>,
+    pub player_ping_min: Option<u32>,
+    pub player_ping_max: Option<u32>,
+    pub players_new_day: u64,
+    pub players_new_week: u64,
+    pub players_new_month: u64,
+    pub players_unique_day: u64,
+    pub players_unique_week: u64,
+    pub players_unique_month: u64,
+    pub sessions_playtime_secs: u64,
+    pub sessions_active_secs: u64,
+    pub sessions_afk_secs: u64,
+    pub sessions_count_day: u64,
+    pub sessions_count_week: u64,
+    pub sessions_count_month: u64,
+    pub timezone_offset: String,
+    /// Player's recent PvP kills as `(victim_name, weapon)`.
+    pub player_recent_kills: Vec<(String, String)>,
     /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders.
     pub top_playtime: Vec<(String, u64, u64)>,
 }
@@ -45,6 +67,9 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
     if let Some(v) = resolve_timed_duration(inner, ctx) {
         return Some(v);
     }
+    if let Some(v) = resolve_recent_kill(inner, ctx) {
+        return Some(v);
+    }
     match inner {
         "plan_server_name" => Some(ctx.server_name.clone()),
         "plan_server_uuid" => Some(ctx.server_uuid.clone()),
@@ -53,6 +78,20 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_players_max_peak_alltime" => Some(ctx.peak_online.to_string()),
         "plan_players_max_peak_recent" => Some(ctx.peak_online.to_string()),
         "plan_players_regular" => Some(ctx.players_total.to_string()),
+        "plan_players_new_day" => Some(ctx.players_new_day.to_string()),
+        "plan_players_new_week" => Some(ctx.players_new_week.to_string()),
+        "plan_players_new_month" => Some(ctx.players_new_month.to_string()),
+        "plan_players_unique_day" => Some(ctx.players_unique_day.to_string()),
+        "plan_players_unique_week" => Some(ctx.players_unique_week.to_string()),
+        "plan_players_unique_month" => Some(ctx.players_unique_month.to_string()),
+        "plan_sessions_playtime_total" => Some(format_duration(ctx.sessions_playtime_secs)),
+        "plan_sessions_active_time_total" => Some(format_duration(ctx.sessions_active_secs)),
+        "plan_sessions_afk_time_total" => Some(format_duration(ctx.sessions_afk_secs)),
+        "plan_sessions_count_day" => Some(ctx.sessions_count_day.to_string()),
+        "plan_sessions_count_week" => Some(ctx.sessions_count_week.to_string()),
+        "plan_sessions_count_month" => Some(ctx.sessions_count_month.to_string()),
+        "plan_server_time_zone" => Some(ctx.timezone_offset.clone()),
+        "plan_server_time_zone_offset" => Some(ctx.timezone_offset.clone()),
         "plan_player_session_length" => {
             let active = ctx.playtime_secs.saturating_sub(ctx.afk_secs);
             Some(format_duration(active))
@@ -88,11 +127,38 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_tps_day" | "plan_tps_week" | "plan_tps_month" => ctx
             .avg_tps_day
             .map(|t| format!("{:.2}", t)),
-        "plan_ping_average_day" => ctx
-            .avg_ping_day
-            .map(|p| format!("{:.0}", p)),
+        "plan_ping_average_day" => ctx.avg_ping_day.map(|p| format!("{:.0}", p)),
+        "plan_ping_average_week" => ctx.avg_ping_week.map(|p| format!("{:.0}", p)),
+        "plan_ping_average_month" => ctx.avg_ping_month.map(|p| format!("{:.0}", p)),
+        "plan_ping_min_day" => ctx.min_ping_day.map(|p| p.to_string()),
+        "plan_ping_max_day" => ctx.max_ping_day.map(|p| p.to_string()),
+        "plan_player_ping_average" => ctx.player_ping_avg.map(|p| format!("{:.0}", p)),
+        "plan_player_ping_min" => ctx.player_ping_min.map(|p| p.to_string()),
+        "plan_player_ping_max" => ctx.player_ping_max.map(|p| p.to_string()),
+        "plan_player_sessions_count" => Some(ctx.sessions_count_day.to_string()),
+        "plan_player_session_length_average" => {
+            let n = ctx.session_triples.len().max(1) as u64;
+            let total = ctx.playtime_secs;
+            Some(format_duration(total / n))
+        }
+        "plan_player_player_caused_deaths" => Some(ctx.player_kills.to_string()),
         _ => None,
     }
+}
+
+fn resolve_recent_kill(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
+    let rest = inner.strip_prefix("plan_player_recent_kill_")?;
+    if let Some(idx) = rest.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= 10) {
+        return ctx
+            .player_recent_kills
+            .get(idx - 1)
+            .map(|(victim, _)| victim.clone());
+    }
+    let rest = inner.strip_prefix("plan_player_recent_kill_weapon_")?;
+    let idx = rest.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= 10)?;
+    ctx.player_recent_kills
+        .get(idx - 1)
+        .map(|(_, weapon)| weapon.clone())
 }
 
 fn resolve_timed_duration(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
@@ -213,6 +279,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_players_online%", &ctx).as_deref(),
             Some("12")
+        );
+    }
+
+    #[test]
+    fn resolves_players_new_day() {
+        let ctx = PlanPlaceholderContext {
+            players_new_day: 3,
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_players_new_day%", &ctx).as_deref(),
+            Some("3")
         );
     }
 

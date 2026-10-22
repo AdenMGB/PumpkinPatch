@@ -15,6 +15,7 @@ const DEFAULT_PERMISSIONS: &[&str] = &[
     "manage.groups",
     "access.theme.editor",
     "manage.themes",
+    "access.data.import",
 ];
 
 const STAFF_PERMISSIONS: &[&str] = &[
@@ -27,6 +28,7 @@ const STAFF_PERMISSIONS: &[&str] = &[
     "access.errors",
     "access.docs",
     "access.theme.editor",
+    "access.data.import",
 ];
 
 const PLAYER_PERMISSIONS: &[&str] = &["page.player.self", "access.player.list"];

@@ -4,15 +4,15 @@ mod auth_layer;
 
 use axum::{
     extract::{Query, State},
-    http::{header::SET_COOKIE, HeaderValue, StatusCode},
+    http::{header::SET_COOKIE, HeaderMap, HeaderValue, StatusCode},
     middleware,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use patch_core::{
-    execute_plan_query, extension_data_v1, list_join_addresses, list_kills, list_web_users,
-    logout_web_user, network_overview_v1, player_gdpr_export_json,
+    execute_plan_query, extension_data_v1, ingest_signed_export, list_join_addresses, list_kills,
+    list_web_users, logout_web_user, network_overview_v1, player_gdpr_export_json,
     plan_log_access, plan_web_login, start_web_registration, PlanJsonCache,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
@@ -33,6 +33,7 @@ pub struct PlanHttpState {
     pub online_by_server: Arc<HashMap<String, u32>>,
     pub static_export_dir: Option<PathBuf>,
     pub json_cache: Arc<PlanJsonCache>,
+    pub export_secret: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +49,7 @@ pub fn router(state: PlanHttpState) -> Router {
     let export_dir = state.static_export_dir.clone();
     let session_protected = Router::new()
         .route("/v1/query", post(query))
+        .route("/v1/import", post(import_signed))
         .route("/v1/errors", get(errors_diagnostics))
         .route("/v1/filters", get(filters))
         .route("/v1/docs", get(openapi_docs))
@@ -87,6 +89,8 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/player/json", get(player_gdpr_json))
         .route("/v1/graph", get(graph))
         .route("/", get(plan_dashboard_redirect))
+        .route("/app", get(plan_embedded_app))
+        .route("/app/", get(plan_embedded_app))
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
@@ -190,17 +194,74 @@ fn live_online(st: &PlanHttpState, server: Option<&str>) -> u32 {
 async fn plan_dashboard_redirect() -> impl IntoResponse {
     (
         StatusCode::TEMPORARY_REDIRECT,
-        [(axum::http::header::LOCATION, "/export/index.html")],
+        [(axum::http::header::LOCATION, "/app")],
     )
+}
+
+async fn plan_embedded_app() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("../static/plan-dashboard.html"),
+    )
+}
+
+async fn import_signed(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+    Json(body): Json<patch_analytics_protocol::SignedExport>,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.data.import").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
+    match ingest_signed_export(&st.pool, &st.network_id, &body, &st.export_secret).await {
+        Ok(report) => Json(serde_json::json!({
+            "users_upserted": report.users_upserted,
+            "sessions_inserted": report.sessions_inserted,
+            "servers_synced": report.servers_synced,
+        }))
+        .into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
 }
 
 async fn player_gdpr_json(
     State(st): State<PlanHttpState>,
+    headers: HeaderMap,
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let player = q.player.as_deref().unwrap_or("");
     if player.is_empty() {
         return (StatusCode::BAD_REQUEST, "player query parameter required").into_response();
+    }
+    if let Some(username) = auth_layer::authorize_session_permission(
+        &st,
+        &headers,
+        "page.player.other",
+    )
+    .await
+    .ok()
+    {
+        let _ = username;
+    } else if let Ok(username) =
+        auth_layer::authorize_session_permission(&st, &headers, "page.player.self").await
+    {
+        let linked: Option<String> = sqlx::query_scalar(
+            "SELECT linked_to_uuid FROM plan_security WHERE username = ? LIMIT 1",
+        )
+        .bind(&username)
+        .fetch_optional(&st.pool)
+        .await
+        .unwrap_or(None);
+        let allowed = linked
+            .map(|u| u.eq_ignore_ascii_case(player))
+            .unwrap_or(false);
+        if !allowed {
+            return (StatusCode::FORBIDDEN, "page.player.self — linked account only").into_response();
+        }
+    } else {
+        return (StatusCode::UNAUTHORIZED, "Plan session required").into_response();
     }
     match player_gdpr_export_json(&st.pool, &st.network_id, player).await {
         Ok(v) => Json(v).into_response(),
@@ -270,7 +331,12 @@ async fn sessions_overview(
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let server = q.server.as_deref();
-    match sessions_overview_v1(&st.pool, &st.network_id, server).await {
+    let key = PlanJsonCache::cache_key("sessionsOverview", &st.network_id, server, "");
+    match with_plan_cache(&st.json_cache, key, false, || async {
+        sessions_overview_v1(&st.pool, &st.network_id, server).await
+    })
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -292,7 +358,12 @@ async fn playerbase_overview(
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let server = q.server.as_deref();
-    match playerbase_overview_v1(&st.pool, &st.network_id, server).await {
+    let key = PlanJsonCache::cache_key("playerbaseOverview", &st.network_id, server, "");
+    match with_plan_cache(&st.json_cache, key, false, || async {
+        playerbase_overview_v1(&st.pool, &st.network_id, server).await
+    })
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -512,7 +583,8 @@ async fn openapi_docs(
             "/v1/serverOverview": { "get": { "summary": "Server overview KPIs" } },
             "/v1/query": { "post": { "summary": "Cohort query builder" } },
             "/v1/auth/register": { "post": { "summary": "Start web account registration" } },
-            "/v1/auth/login": { "post": { "summary": "Web login" } }
+            "/v1/auth/login": { "post": { "summary": "Web login" } },
+            "/v1/import": { "post": { "summary": "Import signed export.json payload" } }
         }
     }))
     .into_response()

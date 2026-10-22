@@ -758,6 +758,57 @@ pub fn placeholder_context_for(
         }
     };
 
+    let now = unix_now();
+    let count_first_seen_since = |cutoff: i64| {
+        rt.players
+            .values()
+            .filter(|p| p.first_seen_unix >= cutoff)
+            .count() as u64
+    };
+    let count_active_since = |cutoff: i64| {
+        rt.players
+            .values()
+            .filter(|p| p.last_seen_unix >= cutoff)
+            .count() as u64
+    };
+    let count_sessions_since = |cutoff: i64| {
+        rt.players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.start_unix >= cutoff)
+            .count() as u64
+    };
+    let (sessions_playtime_secs, sessions_afk_secs) = rt.players.values().fold((0u64, 0u64), |acc, p| {
+        (
+            acc.0 + p.playtime_secs,
+            acc.1 + p.afk_time_secs,
+        )
+    });
+    let sessions_active_secs = sessions_playtime_secs.saturating_sub(sessions_afk_secs);
+
+    let ping_stats_for_cutoff = |cutoff: i64| -> (Option<f64>, Option<u32>, Option<u32>) {
+        let mut sum = 0f64;
+        let mut n = 0u64;
+        let mut min = None;
+        let mut max = None;
+        for p in rt.players.values() {
+            for w in &p.ping_windows {
+                if w.t_unix < cutoff {
+                    continue;
+                }
+                sum += w.avg_ping as f64;
+                n += 1;
+                min = Some(min.map_or(w.min_ping, |m: u32| m.min(w.min_ping)));
+                max = Some(max.map_or(w.max_ping, |m: u32| m.max(w.max_ping)));
+            }
+        }
+        let avg = if n > 0 { Some(sum / n as f64) } else { None };
+        (avg, min, max)
+    };
+    let (avg_ping_day, min_ping_day, max_ping_day) = ping_stats_for_cutoff(now - 86_400);
+    let (avg_ping_week, _, _) = ping_stats_for_cutoff(now - 7 * 86_400);
+    let (avg_ping_month, _, _) = ping_stats_for_cutoff(now - 30 * 86_400);
+
     let entry = rt.players.get(target_uuid);
     let session_triples = entry
         .map(|e| {
@@ -773,6 +824,34 @@ pub fn placeholder_context_for(
                 .collect()
         })
         .unwrap_or_default();
+
+    let player_recent_kills: Vec<(String, String)> = rt
+        .recent_pvp_kills
+        .iter()
+        .filter(|k| k.killer_uuid == target_uuid)
+        .take(10)
+        .map(|k| (k.victim_name.clone(), k.weapon.clone()))
+        .collect();
+
+    let (player_ping_avg, player_ping_min, player_ping_max) = entry
+        .map(|e| {
+            let mut sum = 0f64;
+            let mut n = 0u64;
+            let mut min = None;
+            let mut max = None;
+            for w in &e.ping_windows {
+                if w.t_unix < now - 86_400 {
+                    continue;
+                }
+                sum += w.avg_ping as f64;
+                n += 1;
+                min = Some(min.map_or(w.min_ping, |m| m.min(w.min_ping)));
+                max = Some(max.map_or(w.max_ping, |m| m.max(w.max_ping)));
+            }
+            let avg = if n > 0 { Some(sum / n as f64) } else { None };
+            (avg, min, max)
+        })
+        .unwrap_or((None, None, None));
 
     patch_plan_core::PlanPlaceholderContext {
         server_name: rt.config.server_name.clone(),
@@ -797,7 +876,28 @@ pub fn placeholder_context_for(
         session_triples,
         now_ms,
         avg_tps_day,
-        avg_ping_day: None,
+        avg_ping_day,
+        avg_ping_week,
+        avg_ping_month,
+        min_ping_day,
+        max_ping_day,
+        player_ping_avg,
+        player_ping_min,
+        player_ping_max,
+        players_new_day: count_first_seen_since(now - 86_400),
+        players_new_week: count_first_seen_since(now - 7 * 86_400),
+        players_new_month: count_first_seen_since(now - 30 * 86_400),
+        players_unique_day: count_active_since(now - 86_400),
+        players_unique_week: count_active_since(now - 7 * 86_400),
+        players_unique_month: count_active_since(now - 30 * 86_400),
+        sessions_playtime_secs,
+        sessions_active_secs,
+        sessions_afk_secs,
+        sessions_count_day: count_sessions_since(now - 86_400),
+        sessions_count_week: count_sessions_since(now - 7 * 86_400),
+        sessions_count_month: count_sessions_since(now - 30 * 86_400),
+        timezone_offset: "UTC".into(),
+        player_recent_kills,
         top_playtime: top,
     }
 }

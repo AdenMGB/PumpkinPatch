@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Pumpkin Patch Plan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --accent: #f97316; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 1rem 1.5rem; border-bottom: 1px solid #334155; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+    header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+    main { padding: 1.5rem; max-width: 64rem; margin: 0 auto; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+    .card { background: var(--card); border-radius: 0.5rem; padding: 1rem; }
+    .card span { color: var(--muted); font-size: 0.8rem; }
+    .card strong { display: block; font-size: 1.4rem; margin-top: 0.25rem; }
+    label { color: var(--muted); font-size: 0.85rem; }
+    select, input, button { background: #334155; color: var(--text); border: 1px solid #475569; border-radius: 0.35rem; padding: 0.45rem 0.6rem; }
+    button { background: var(--accent); border: none; cursor: pointer; font-weight: 600; }
+    a { color: var(--accent); }
+    #log { color: var(--muted); font-size: 0.85rem; margin-top: 1rem; white-space: pre-wrap; }
+    nav a { margin-right: 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Plan dashboard</h1>
+    <nav>
+      <a href="/export/index.html">Static export</a>
+      <a href="/v1/docs">OpenAPI</a>
+    </nav>
+    <label>Server UUID <input id="server" placeholder="from /v1/network/servers" size="36" /></label>
+    <button type="button" id="load">Load overview</button>
+  </header>
+  <main>
+    <div class="cards">
+      <div class="card"><span>Online</span><strong id="online">—</strong></div>
+      <div class="card"><span>Total players</span><strong id="total">—</strong></div>
+      <div class="card"><span>7d unique</span><strong id="unique7">—</strong></div>
+      <div class="card"><span>Avg TPS (7d)</span><strong id="tps">—</strong></div>
+    </div>
+    <p id="log">Enter a server UUID and load live JSON from <code>/v1/serverOverview</code>.</p>
+  </main>
+  <script>
+    async function loadServers() {
+      try {
+        const r = await fetch('/v1/network/servers');
+        const j = await r.json();
+        const list = j.servers || [];
+        if (list.length && !document.getElementById('server').value) {
+          document.getElementById('server').value = list[0].uuid || list[0].id || '';
+        }
+      } catch (_) {}
+    }
+    document.getElementById('load').addEventListener('click', async () => {
+      const server = document.getElementById('server').value.trim();
+      const log = document.getElementById('log');
+      if (!server) { log.textContent = 'Server UUID required.'; return; }
+      log.textContent = 'Loading…';
+      try {
+        const r = await fetch('/v1/serverOverview?server=' + encodeURIComponent(server));
+        if (!r.ok) throw new Error(r.status + ' ' + r.statusText);
+        const d = await r.json();
+        const n = d.numbers || {};
+        const w = d.last_7_days || {};
+        document.getElementById('online').textContent = n.online_players ?? '—';
+        document.getElementById('total').textContent = n.total_players ?? '—';
+        document.getElementById('unique7').textContent = w.unique_players ?? '—';
+        document.getElementById('tps').textContent = w.avg_tps != null ? Number(w.avg_tps).toFixed(2) : '—';
+        log.textContent = 'Loaded serverOverview for ' + server;
+      } catch (e) {
+        log.textContent = String(e);
+      }
+    });
+    loadServers();
+  </script>
+</body>
+</html>

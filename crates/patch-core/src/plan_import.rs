@@ -19,7 +19,16 @@ pub async fn import_signed_plan_export(
     }
     let raw = std::fs::read_to_string(export_path)?;
     let signed: patch_analytics_protocol::SignedExport = serde_json::from_str(&raw)?;
-    patch_analytics_protocol::verify_signed_export(&signed, export_secret)
+    ingest_signed_export(pool, network_id, &signed, export_secret).await
+}
+
+pub async fn ingest_signed_export(
+    pool: &SqlitePool,
+    network_id: &str,
+    signed: &patch_analytics_protocol::SignedExport,
+    export_secret: &str,
+) -> Result<PlanSyncReport> {
+    patch_analytics_protocol::verify_signed_export(signed, export_secret)
         .map_err(Error::InvalidState)?;
     ingest_payload(pool, network_id, &signed.payload).await
 }

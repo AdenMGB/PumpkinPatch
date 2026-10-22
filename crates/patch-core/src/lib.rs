@@ -96,7 +96,7 @@ pub use plan_db::{
     optimize_plan_sqlite, process_desktop_plan_requests, remove_plan_player,
     list_plan_backups, restore_plan_sqlite_from_backup, PlanBackupEntry, PlanDbBackupReport,
 };
-pub use plan_import::import_signed_plan_export;
+pub use plan_import::{import_signed_plan_export, ingest_signed_export};
 pub use plan_sync::sync_network_plan_exports;
 pub use db::Database;
 pub use error::{Error, Result};

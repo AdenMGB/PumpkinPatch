@@ -37,6 +37,16 @@ pub async fn sync_network_plan_exports(
             Ok(None) | Err(_) => {}
         }
     }
+    let harvest_path = Path::new(&network.data_path)
+        .join("harvest")
+        .join("sessions.harvest.json");
+    let _ = crate::harvest_sync::sync_harvest_from_plan_sqlite(
+        pool,
+        &network.id.to_string(),
+        &harvest_path,
+    )
+    .await;
+
     if export_static_bundle && !servers.is_empty() {
         let overview = crate::aggregate_network_analytics(network, servers, export_secret)?;
         let triples: Vec<(String, String, u32)> = overview
