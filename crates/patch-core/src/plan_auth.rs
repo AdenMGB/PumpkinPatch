@@ -5,7 +5,14 @@ use sqlx::{Row, SqlitePool};
 
 const DEFAULT_PERMISSIONS: &[&str] = &[
     "page.network",
+    "page.network.overview",
+    "page.network.server.list",
+    "page.network.playerbase",
+    "page.network.sessions",
     "page.server",
+    "page.server.overview",
+    "page.server.online.activity",
+    "page.server.performance",
     "page.player.self",
     "page.player.other",
     "access.player.list",

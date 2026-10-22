@@ -78,6 +78,15 @@ pub async fn export_plan_static_bundle(
     )?;
     write("theme-default.json", plan_theme_json("default"))?;
     write_plan_export_index(export_dir)?;
+    write_plan_export_static_assets(export_dir)?;
+    Ok(())
+}
+
+fn write_plan_export_static_assets(export_dir: &Path) -> Result<()> {
+    const DASHBOARD: &str = include_str!("../../patch-plan-http/static/plan-dashboard.html");
+    const REGISTER: &str = include_str!("../../patch-plan-http/static/register.html");
+    std::fs::write(export_dir.join("app.html"), DASHBOARD)?;
+    std::fs::write(export_dir.join("register.html"), REGISTER)?;
     Ok(())
 }
 

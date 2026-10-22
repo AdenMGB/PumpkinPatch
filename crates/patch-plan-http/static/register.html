@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Plan — Register</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 24rem; margin: 3rem auto; padding: 0 1rem; background: #0f172a; color: #e2e8f0; }
+    label { display: block; margin: 1rem 0 0.35rem; color: #94a3b8; font-size: 0.9rem; }
+    input { width: 100%; padding: 0.5rem; border-radius: 0.35rem; border: 1px solid #475569; background: #334155; color: #f8fafc; }
+    button { margin-top: 1.25rem; width: 100%; padding: 0.6rem; background: #f97316; border: none; border-radius: 0.35rem; font-weight: 600; cursor: pointer; }
+    pre { background: #1e293b; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; }
+    a { color: #f97316; }
+    #err { color: #f87171; }
+  </style>
+</head>
+<body>
+  <h1>Plan web account</h1>
+  <p>Step 1: choose a username and password. Step 2: run <code>/plan register &lt;code&gt;</code> in-game (or from console for admin).</p>
+  <label>Username <input id="user" autocomplete="username" /></label>
+  <label>Password <input id="pass" type="password" autocomplete="new-password" /></label>
+  <button type="button" id="go">Start registration</button>
+  <p id="err"></p>
+  <pre id="out" hidden></pre>
+  <p><a href="/app">Back to dashboard</a></p>
+  <script>
+    document.getElementById('go').onclick = async () => {
+      const err = document.getElementById('err');
+      const out = document.getElementById('out');
+      err.textContent = '';
+      out.hidden = true;
+      try {
+        const r = await fetch('/v1/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('user').value.trim(),
+            password: document.getElementById('pass').value,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.message || j || r.statusText);
+        out.hidden = false;
+        out.textContent = 'Registration code (expires in-game):\n\n  ' + j.code + '\n\nRun: /plan register ' + j.code;
+      } catch (e) {
+        err.textContent = String(e.message || e);
+      }
+    };
+  </script>
+</body>
+</html>

@@ -778,6 +778,32 @@ pub fn placeholder_context_for(
             .filter(|s| s.start_unix >= cutoff)
             .count() as u64
     };
+    let playtime_in_window = |cutoff: i64| -> u64 {
+        rt.players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.end_unix >= cutoff)
+            .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
+            .sum()
+    };
+
+    let peak_sample = rt
+        .activity_samples
+        .iter()
+        .max_by_key(|s| s.online);
+    let peak_date_recent = peak_sample
+        .map(|s| s.t.to_string())
+        .unwrap_or_else(|| now.to_string());
+    let peak_date_alltime = peak_date_recent.clone();
+
+    let tps_spikes_day = {
+        let cutoff = now - 86_400;
+        rt.performance_samples
+            .iter()
+            .filter(|s| s.t >= cutoff && s.ticks_per_second < 15.0)
+            .count() as u32
+    };
+
     let (sessions_playtime_secs, sessions_afk_secs) = rt.players.values().fold((0u64, 0u64), |acc, p| {
         (
             acc.0 + p.playtime_secs,
@@ -934,6 +960,13 @@ pub fn placeholder_context_for(
         player_kills_day: pvp_day,
         player_kills_week: pvp_week,
         player_kills_month: pvp_month,
+        sessions_playtime_day: playtime_in_window(now - 86_400),
+        sessions_playtime_week: playtime_in_window(now - 7 * 86_400),
+        sessions_playtime_month: playtime_in_window(now - 30 * 86_400),
+        peak_online_date_alltime: peak_date_alltime,
+        peak_online_date_recent: peak_date_recent,
+        favorite_server: rt.config.server_name.clone(),
+        tps_spikes_day,
         top_playtime: top,
     }
 }

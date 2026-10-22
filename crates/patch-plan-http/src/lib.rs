@@ -12,8 +12,9 @@ use axum::{
 };
 use patch_core::{
     execute_plan_query, extension_data_v1, ingest_signed_export, list_join_addresses, list_kills,
-    list_web_users, logout_web_user, network_overview_v1, player_gdpr_export_json,
-    plan_log_access, plan_web_login, start_web_registration, PlanJsonCache,
+    list_web_users, load_cached_plan_query, logout_web_user, network_overview_v1,
+    player_gdpr_export_json, plan_log_access, plan_web_login, read_disk_cache, start_web_registration,
+    write_disk_cache, PlanJsonCache,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, with_plan_cache,
@@ -43,12 +44,18 @@ struct ServerQuery {
     #[serde(rename = "type")]
     graph_type: Option<String>,
     name: Option<String>,
+    token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QueryTokenQuery {
+    token: String,
 }
 
 pub fn router(state: PlanHttpState) -> Router {
     let export_dir = state.static_export_dir.clone();
     let session_protected = Router::new()
-        .route("/v1/query", post(query))
+        .route("/v1/query", get(query_by_token).post(query))
         .route("/v1/import", post(import_signed))
         .route("/v1/errors", get(errors_diagnostics))
         .route("/v1/filters", get(filters))
@@ -94,6 +101,7 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/", get(plan_dashboard_redirect))
         .route("/app", get(plan_embedded_app))
         .route("/app/", get(plan_embedded_app))
+        .route("/register", get(plan_register_page))
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
@@ -208,6 +216,25 @@ async fn plan_embedded_app() -> impl IntoResponse {
     )
 }
 
+async fn plan_register_page() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("../static/register.html"),
+    )
+}
+
+async fn persist_disk_cache(st: &PlanHttpState, key: &str, json: &str) {
+    if let Some(dir) = &st.static_export_dir {
+        let _ = write_disk_cache(dir, key, json);
+    }
+}
+
+async fn try_disk_cache(st: &PlanHttpState, key: &str) -> Option<String> {
+    st.static_export_dir
+        .as_ref()
+        .and_then(|dir| read_disk_cache(dir, key).ok().flatten())
+}
+
 async fn import_signed(
     State(st): State<PlanHttpState>,
     headers: HeaderMap,
@@ -288,7 +315,12 @@ async fn server_overview(
                 Some(uuid),
                 "",
             );
-            match with_plan_cache(&st.json_cache, key, false, || async {
+            if let Some(hit) = try_disk_cache(&st, &key).await {
+                if let Ok(v) = serde_json::from_str::<patch_core::PlanServerOverviewV1>(&hit) {
+                    return Json(v).into_response();
+                }
+            }
+            match with_plan_cache(&st.json_cache, key.clone(), false, || async {
                 server_overview_v1(
                     &st.pool,
                     &st.network_id,
@@ -299,7 +331,12 @@ async fn server_overview(
             })
             .await
             {
-                Ok(v) => Json(v).into_response(),
+                Ok(v) => {
+                    if let Ok(json) = serde_json::to_string(&v) {
+                        persist_disk_cache(&st, &key, &json).await;
+                    }
+                    Json(v).into_response()
+                }
                 Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
             }
         }
@@ -521,9 +558,38 @@ async fn network_ping_table(State(st): State<PlanHttpState>) -> impl IntoRespons
 
 async fn player_profile(
     State(st): State<PlanHttpState>,
+    headers: HeaderMap,
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let player = q.player.as_deref().unwrap_or("");
+    if player.is_empty() {
+        return (StatusCode::BAD_REQUEST, "player query parameter required").into_response();
+    }
+    if auth_layer::authorize_session_permission(&st, &headers, "page.player.other")
+        .await
+        .is_err()
+    {
+        if let Ok(username) =
+            auth_layer::authorize_session_permission(&st, &headers, "page.player.self").await
+        {
+            let linked: Option<String> = sqlx::query_scalar(
+                "SELECT linked_to_uuid FROM plan_security WHERE username = ? LIMIT 1",
+            )
+            .bind(&username)
+            .fetch_optional(&st.pool)
+            .await
+            .unwrap_or(None);
+            let allowed = linked
+                .map(|u| u.eq_ignore_ascii_case(player))
+                .unwrap_or(false);
+            if !allowed {
+                return (StatusCode::FORBIDDEN, "page.player.self — linked account only")
+                    .into_response();
+            }
+        } else {
+            return (StatusCode::UNAUTHORIZED, "Plan session required").into_response();
+        }
+    }
     match player_profile_v1(&st.pool, &st.network_id, player).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
@@ -559,6 +625,22 @@ async fn filters(
     match plan_filters_catalog(&st.pool, &st.network_id, q.server.as_deref()).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn query_by_token(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+    Query(q): Query<QueryTokenQuery>,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.query").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
+    match load_cached_plan_query(&st.pool, &q.token).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
     }
 }
 

@@ -3,6 +3,7 @@
 mod analytics;
 mod db;
 mod plan_graph;
+mod plan_disk_cache;
 mod plan_json_cache;
 mod plan_overviews;
 mod plan_perf;
@@ -59,7 +60,8 @@ pub use plan_store::{
     PlanSessionRow, PlanSyncReport, PlanNetworkServerRow, plan_network_servers_v1,
 };
 pub use plan_graph::plan_graph;
-pub use plan_json_cache::{PlanJsonCache, REFRESH_BARRIER_MS, with_plan_cache};
+pub use plan_disk_cache::{read_disk_cache, write_disk_cache, DISK_CACHE_TTL_SECS};
+pub use plan_json_cache::{PlanJsonCache, MEMORY_CACHE_MS, REFRESH_BARRIER_MS, with_plan_cache};
 pub use plan_query::{
     execute_plan_query, load_cached_plan_query, plan_filters_catalog, PlanFilterTypeInfo,
     PlanFiltersCatalog, PlanQueryCohortView, PlanQueryRequest, PlanQueryResult,
