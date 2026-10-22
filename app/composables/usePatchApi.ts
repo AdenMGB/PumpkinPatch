@@ -12,6 +12,8 @@ import type {
   PumpkinMarketListResult,
   PumpkinMarketPluginDetail,
   NetworkAnalyticsOverview,
+  NetworkTopology,
+  RouteWireSpec,
   PlanCommandUsageRow,
   PlanGraphPlayersOnline,
   PlanKillRow,
@@ -243,5 +245,15 @@ export function usePatchApi() {
       invoke<PlanSessionsOverviewV1>('analytics_plan_network_sessions_overview', { networkId }),
     analyticsPlanNetworkPingTable: (networkId: string) =>
       invoke<PlanPingTableRow[]>('analytics_plan_network_ping_table', { networkId }),
+    networkTopologyGet: (networkId: string) =>
+      invoke<NetworkTopology>('network_topology_get', { networkId }),
+    networkHotWire: (networkId: string, spec: RouteWireSpec) =>
+      invoke<string>('network_hot_wire_server_to_proxy', { networkId, spec }),
+    planHttpStart: (networkId: string) =>
+      invoke<string>('plan_http_start', { networkId }),
+    analyticsPlanExportStatic: (networkId: string, serverId: string) =>
+      invoke<string>('analytics_plan_export_static', { networkId, serverId }),
+    analyticsHarvestSync: (networkId: string) =>
+      invoke<number>('analytics_harvest_sync', { networkId }),
   }
 }

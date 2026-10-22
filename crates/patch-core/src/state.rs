@@ -1,4 +1,5 @@
 use crate::db::Database;
+use vineyard_bus::VineyardBus;
 use crate::plan_json_cache::PlanJsonCache;
 use crate::error::Result;
 use crate::java::resolve_java_executable;
@@ -18,6 +19,7 @@ pub struct AppState {
     pub networks: NetworkOrchestrator,
     pub processes: Arc<RwLock<ProcessSupervisor>>,
     pub plan_json_cache: Arc<PlanJsonCache>,
+    pub vineyard_bus: VineyardBus,
     settings: Arc<RwLock<AppSettings>>,
 }
 
@@ -79,6 +81,7 @@ impl AppState {
         let releases = ReleaseService::new(dirs.clone());
         let networks = NetworkOrchestrator::new(dirs.clone(), releases.clone());
         let processes = Arc::new(RwLock::new(ProcessSupervisor::new()));
+        crate::plan_extension::ensure_builtin_extensions();
         Ok(Self {
             dirs,
             db,
@@ -86,6 +89,7 @@ impl AppState {
             networks,
             processes,
             plan_json_cache: PlanJsonCache::new(),
+            vineyard_bus: VineyardBus::new(),
             settings: Arc::new(RwLock::new(settings)),
         })
     }

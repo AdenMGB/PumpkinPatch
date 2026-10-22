@@ -134,6 +134,22 @@ pub struct AppSettings {
     pub java_path: String,
     pub bind_host: String,
     pub pumpkin_channel_default: String,
+    #[serde(default = "default_true")]
+    pub plan_http_enabled: bool,
+    #[serde(default = "default_plan_http_port")]
+    pub plan_http_port: u16,
+    #[serde(default = "default_true")]
+    pub harvest_duckdb_enabled: bool,
+    #[serde(default)]
+    pub gourd_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_plan_http_port() -> u16 {
+    8804
 }
 
 impl Default for AppSettings {
@@ -142,6 +158,10 @@ impl Default for AppSettings {
             java_path: "java".into(),
             bind_host: "127.0.0.1".into(),
             pumpkin_channel_default: "nightly".into(),
+            plan_http_enabled: true,
+            plan_http_port: 8804,
+            harvest_duckdb_enabled: true,
+            gourd_enabled: false,
         }
     }
 }

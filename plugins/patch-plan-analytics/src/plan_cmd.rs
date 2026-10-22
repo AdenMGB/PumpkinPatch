@@ -23,7 +23,9 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                 CommandNode::argument("query", &ArgumentType::String(StringType::Greedy))
                     .execute(SearchHandler),
             ),
-        );
+        )
+        .then(CommandNode::literal("info").execute(InfoHandler))
+        .then(CommandNode::literal("json").execute(JsonHandler));
     context.register_command(cmd, "patchplan.command");
     Ok(())
 }
@@ -45,6 +47,8 @@ impl CommandHandler for HelpHandler {
             "§e/plan ingame§r — same as /plan (chat stats summary)",
             "§e/plan sessions§r — your recent closed sessions",
             "§e/plan search <name>§r — find players on this server export",
+            "§e/plan info§r — plugin & export status",
+            "§e/plan json§r — GDPR JSON export path hint",
             "§e/plan help§r — this message",
         ] {
             player.send_system_message(TextComponent::text(line), false);
@@ -177,6 +181,67 @@ impl CommandHandler for SessionsHandler {
         for line in lines {
             player.send_system_message(TextComponent::text(&line), false);
         }
+        Ok(1)
+    }
+}
+
+struct InfoHandler;
+
+impl CommandHandler for InfoHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let lines = with_runtime(|rt| {
+            vec![
+                "§6Patch Plan§r — Pumpkin Patch native analytics".into(),
+                format!("§7Schema§r v{}", patch_analytics_protocol::EXPORT_SCHEMA_VERSION),
+                format!("§7Players tracked§r {}", rt.players.len()),
+                format!(
+                    "§7Closed sessions§r {}",
+                    rt.players
+                        .values()
+                        .map(|p| p.completed_sessions.len())
+                        .sum::<usize>()
+                ),
+                "§7Desktop§r sync via signed export.json + HarvestMetrics".into(),
+            ]
+        })
+        .unwrap_or_else(|| vec!["§7No runtime state.".into()]);
+        for line in lines {
+            player.send_system_message(TextComponent::text(&line), false);
+        }
+        Ok(1)
+    }
+}
+
+struct JsonHandler;
+
+impl CommandHandler for JsonHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let id = player_id(&player);
+        let msg = with_runtime(|rt| {
+            let entry = rt.players.get(&id)?;
+            format!(
+                "§7GDPR export§r: open Pumpkin Patch → Analytics for §f{}§7 (uuid {}) — or run §e/plan json§7 after static export.",
+                entry.name,
+                id
+            )
+        })
+        .flatten()
+        .unwrap_or_else(|| {
+            "§7No player row yet — rejoin after Patch Plan WASM is deployed.".into()
+        });
+        player.send_system_message(TextComponent::text(&msg), false);
         Ok(1)
     }
 }

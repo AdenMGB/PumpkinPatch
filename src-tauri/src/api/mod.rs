@@ -6,9 +6,12 @@ pub mod analytics;
 pub mod catalog;
 pub mod console;
 pub mod network;
+pub mod orchestration;
+pub mod plan_http;
 pub mod ping;
 pub mod server;
 pub mod settings;
+pub mod telemetry;
 
 pub type Result<T> = std::result::Result<T, PatchApiError>;
 

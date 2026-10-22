@@ -3,13 +3,18 @@ resolver = "2"
 members = [
     "crates/patch-core",
     "crates/patch-plan-core",
+    "crates/patch-plan-http",
+    "crates/vineyard-protocol",
+    "crates/vineyard-bus",
+    "crates/gourd-proxy",
+    "crates/harvest-metrics",
+    "crates/stem-agent",
     "plugins/patch-analytics-protocol",
     "plugins/patch-network-protocol",
-    "plugins/patch-hub-lobby",
     "src-tauri",
 ]
 
-exclude = ["plugins/patch-plan-analytics"]
+exclude = ["plugins/patch-plan-analytics", "plugins/patch-hub-lobby"]
 
 [workspace.package]
 edition = "2021"

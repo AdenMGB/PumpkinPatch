@@ -84,6 +84,12 @@ pub fn run() {
             api::catalog::pumpkin_market_list_plugins,
             api::catalog::pumpkin_market_get_plugin,
             api::catalog::pumpkin_market_install_plugin,
+            api::orchestration::network_topology_get,
+            api::orchestration::network_hot_wire_server_to_proxy,
+            api::orchestration::analytics_plan_export_static,
+            api::orchestration::analytics_harvest_sync,
+            api::plan_http::plan_http_start,
+            api::telemetry::subscribe_live_telemetry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

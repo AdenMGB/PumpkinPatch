@@ -7,6 +7,9 @@ edition.workspace = true
 [dependencies]
 patch-analytics-protocol = { path = "../../plugins/patch-analytics-protocol" }
 patch-plan-core = { path = "../patch-plan-core" }
+harvest-metrics = { path = "../harvest-metrics" }
+vineyard-bus = { path = "../vineyard-bus" }
+vineyard-protocol = { path = "../vineyard-protocol" }
 patch-network-protocol = { path = "../../plugins/patch-network-protocol" }
 chrono = { version = "0.4", features = ["serde"] }
 directories = "6"

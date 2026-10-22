@@ -1,0 +1,12 @@
+[package]
+name = "vineyard-bus"
+version = "0.1.0"
+edition.workspace = true
+description = "Vineyard local telemetry bus + route mutation ledger (plangem.md §1.4)"
+
+[dependencies]
+tokio = { version = "1", features = ["sync"] }
+uuid = { version = "1", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+vineyard-protocol = { path = "../vineyard-protocol" }

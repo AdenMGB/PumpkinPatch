@@ -213,6 +213,12 @@ impl Database {
                 "java_path" => settings.java_path = value,
                 "bind_host" => settings.bind_host = value,
                 "pumpkin_channel_default" => settings.pumpkin_channel_default = value,
+                "plan_http_enabled" => settings.plan_http_enabled = value == "true",
+                "plan_http_port" => {
+                    settings.plan_http_port = value.parse().unwrap_or(8804);
+                }
+                "harvest_duckdb_enabled" => settings.harvest_duckdb_enabled = value == "true",
+                "gourd_enabled" => settings.gourd_enabled = value == "true",
                 _ => {}
             }
         }
@@ -255,14 +261,37 @@ impl Database {
     }
 
     pub async fn save_settings(&self, settings: &AppSettings) -> Result<()> {
-        for (key, value) in [
-            ("java_path", settings.java_path.as_str()),
-            ("bind_host", settings.bind_host.as_str()),
+        let pairs = [
+            ("java_path", settings.java_path.clone()),
+            ("bind_host", settings.bind_host.clone()),
+            ("pumpkin_channel_default", settings.pumpkin_channel_default.clone()),
             (
-                "pumpkin_channel_default",
-                settings.pumpkin_channel_default.as_str(),
+                "plan_http_enabled",
+                if settings.plan_http_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
             ),
-        ] {
+            ("plan_http_port", settings.plan_http_port.to_string()),
+            (
+                "harvest_duckdb_enabled",
+                if settings.harvest_duckdb_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+            (
+                "gourd_enabled",
+                if settings.gourd_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+        ];
+        for (key, value) in pairs {
             sqlx::query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
                 .bind(key)
                 .bind(value)

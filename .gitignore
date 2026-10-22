@@ -1,5 +1,6 @@
 # Nuxt / Node
 node_modules
+pumpkin/
 .nuxt
 .output
 dist

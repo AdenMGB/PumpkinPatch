@@ -44,6 +44,39 @@ export interface AppSettings {
   java_path: string
   bind_host: string
   pumpkin_channel_default: string
+  plan_http_enabled: boolean
+  plan_http_port: number
+  harvest_duckdb_enabled: boolean
+  gourd_enabled: boolean
+}
+
+export interface TopologyNode {
+  id: string
+  kind: string
+  label: string
+  port?: number | null
+}
+
+export interface TopologyEdge {
+  proxy_id: string
+  backend_server_id: string
+  server_alias: string
+  forced_hosts: string[]
+}
+
+export interface NetworkTopology {
+  network_id: string
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+}
+
+export interface RouteWireSpec {
+  proxy_id: string
+  backend_server_id: string
+  server_alias: string
+  forced_hosts: string[]
+  priority_tier: number
+  permission_gate?: string | null
 }
 
 export interface PingResult {

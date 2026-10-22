@@ -2005,6 +2005,33 @@ pub async fn list_join_addresses(
         .collect())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanNetworkServerRow {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+}
+
+pub async fn plan_network_servers_v1(
+    pool: &SqlitePool,
+    network_id: &str,
+) -> Result<Vec<PlanNetworkServerRow>> {
+    let rows = sqlx::query(
+        "SELECT id, uuid, name FROM plan_servers WHERE network_id = ? ORDER BY name ASC",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| PlanNetworkServerRow {
+            id: row.get("id"),
+            uuid: row.get("uuid"),
+            name: row.get("name"),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod ingest_tests {
     use super::*;

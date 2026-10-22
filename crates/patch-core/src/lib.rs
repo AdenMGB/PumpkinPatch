@@ -10,6 +10,11 @@ mod plan_query;
 mod plan_store;
 mod plan_sync;
 mod plan_extension;
+mod plan_export;
+mod plan_theme;
+mod orchestration;
+mod harvest_sync;
+pub mod telemetry_bus;
 mod plan_v1;
 mod error;
 mod hub_lobby;
@@ -46,7 +51,7 @@ pub use plan_store::{
     PlanPlayerConnectionRow, PlanPlayerNicknameRow, PlanPlayerProfileStats, PlanPlayerProfileV1,
     PlanPlayerPunchcardPoint, PlanPlayerTableRow, PlanPlayerVersusV1, PlanPlayerWorldSlice,
     PlanServerOverviewV1,
-    PlanSessionRow, PlanSyncReport,
+    PlanSessionRow, PlanSyncReport, PlanNetworkServerRow, plan_network_servers_v1,
 };
 pub use plan_graph::plan_graph;
 pub use plan_json_cache::{PlanJsonCache, REFRESH_BARRIER_MS, with_plan_cache};
@@ -55,8 +60,15 @@ pub use plan_query::{
     PlanFiltersCatalog, PlanQueryCohortView, PlanQueryRequest, PlanQueryResult,
 };
 pub use plan_extension::{
-    extension_data_v1, PlanExtensionDataV1, PlanExtensionPlugin, PlanExtensionTab,
+    ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,
+    PlanExtensionPlugin, PlanExtensionTab,
 };
+pub use plan_export::{default_export_dir, export_plan_static_bundle};
+pub use plan_theme::plan_theme_json;
+pub use orchestration::{
+    build_topology, hot_wire_velocity_toml, NetworkTopology, TopologyEdge, TopologyNode,
+};
+pub use harvest_sync::sync_harvest_from_plan_sqlite;
 pub use plan_v1::{
     players_table_v1, players_v1, sessions_v1, PlanExtensionColumn, PlanPlayerV1Entry,
     PlanPlayersTableV1, PlanPlayersV1, PlanSessionsV1,
