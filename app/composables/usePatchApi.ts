@@ -12,6 +12,8 @@ import type {
   PumpkinMarketListResult,
   PumpkinMarketPluginDetail,
   NetworkAnalyticsOverview,
+  NetworkTopology,
+  RouteWireSpec,
   PlanCommandUsageRow,
   PlanGraphPlayersOnline,
   PlanKillRow,
@@ -34,6 +36,9 @@ import type {
   PlanServerOverviewV1,
   PlanSessionRow,
   PlanPluginInstallResult,
+  PlanBackupEntry,
+  PlanDbBackupResponse,
+  PlanSyncReport,
   NetworkSummary,
   PingResult,
   ServerRecord,
@@ -243,5 +248,131 @@ export function usePatchApi() {
       invoke<PlanSessionsOverviewV1>('analytics_plan_network_sessions_overview', { networkId }),
     analyticsPlanNetworkPingTable: (networkId: string) =>
       invoke<PlanPingTableRow[]>('analytics_plan_network_ping_table', { networkId }),
+    networkTopologyGet: (networkId: string) =>
+      invoke<NetworkTopology>('network_topology_get', { networkId }),
+    networkHotWire: (networkId: string, spec: RouteWireSpec) =>
+      invoke<string>('network_hot_wire_server_to_proxy', { networkId, spec }),
+    gourdPoolScaleRecommend: (req: import('~/types/patch').GourdPoolScaleRecommendRequest) =>
+      invoke<number>('gourd_pool_scale_recommend', { req }),
+    gourdPoolPromote: (networkId: string, req: import('~/types/patch').GourdPoolPromoteRequest) =>
+      invoke<string[]>('gourd_pool_promote', { networkId, req }),
+    gourdScarecrowStats: (networkId: string) =>
+      invoke<import('~/types/patch').GourdScarecrowStats | null>('gourd_scarecrow_stats', {
+        networkId,
+      }),
+    planHttpStart: (networkId: string) =>
+      invoke<string>('plan_http_start', { networkId }),
+    planAuthRegisterStart: (networkId: string, username: string, password: string) =>
+      invoke<import('~/types/patch').PlanRegisterStartResponse>('plan_auth_register_start', {
+        networkId,
+        username,
+        password,
+      }),
+    planWebUsersList: () => invoke<import('~/types/patch').PlanWebUser[]>('plan_web_users_list'),
+    planWebUserSetGroup: (username: string, groupName: string) =>
+      invoke<void>('plan_web_user_set_group', { username, groupName }),
+    planWebUserLogout: (username: string) =>
+      invoke<number>('plan_web_user_logout', { username }),
+    planWebUserDelete: (username: string) => invoke<void>('plan_web_user_delete', { username }),
+    analyticsPlanExportStatic: (networkId: string, serverId: string) =>
+      invoke<string>('analytics_plan_export_static', { networkId, serverId }),
+    analyticsHarvestSync: (networkId: string) =>
+      invoke<number>('analytics_harvest_sync', { networkId }),
+    tendrilVoiceStart: (bind = '0.0.0.0:24454', proximityBlocks?: number) =>
+      invoke<string>('tendril_voice_start', {
+        bind,
+        proximityBlocks: proximityBlocks ?? null,
+      }),
+    tendrilVoiceStats: () => invoke<import('~/types/patch').TendrilVoiceStats>('tendril_voice_stats'),
+    tendrilVoiceListPeers: () =>
+      invoke<import('~/types/patch').TendrilVoicePeer[]>('tendril_voice_list_peers'),
+    tendrilVoiceSetPosition: (
+      playerUuid: string,
+      x: number,
+      y: number,
+      z: number,
+      dimension: string,
+    ) =>
+      invoke<void>('tendril_voice_set_position', {
+        playerUuid,
+        x,
+        y,
+        z,
+        dimension,
+      }),
+    patchworkFingerprintDir: (dir: string) => invoke<string>('patchwork_fingerprint_dir', { dir }),
+    patchworkMergePackDirs: (baseDir: string, overlayDir: string) =>
+      invoke<import('~/types/patch').PackManifest>('patchwork_merge_pack_dirs', {
+        baseDir,
+        overlayDir,
+      }),
+    patchworkMaterializeMergedPack: (baseDir: string, overlayDir: string, outputDir: string) =>
+      invoke<import('~/types/patch').PackManifest>('patchwork_materialize_merged_pack', {
+        baseDir,
+        overlayDir,
+        outputDir,
+      }),
+    vineyardPublishVoicePosition: (
+      playerUuid: string,
+      x: number,
+      y: number,
+      z: number,
+      dimension: string,
+      yaw?: number,
+      pitch?: number,
+    ) =>
+      invoke<void>('vineyard_publish_voice_position', {
+        playerUuid,
+        x,
+        y,
+        z,
+        dimension,
+        yaw: yaw ?? null,
+        pitch: pitch ?? null,
+      }),
+    tendrilVoiceFlushReport: (playerUuid: string, outputDir?: string) =>
+      invoke<import('~/types/patch').TendrilVoiceFlushResult>('tendril_voice_flush_report', {
+        playerUuid,
+        outputDir: outputDir ?? null,
+      }),
+    voiceDeckListDevices: () =>
+      invoke<import('~/types/patch').VoiceAudioOutputDevice[]>('voice_deck_list_devices'),
+    voiceDeckStartMonitor: (
+      x: number,
+      y: number,
+      z: number,
+      dimension: string,
+      deviceId?: string,
+    ) =>
+      invoke<string>('voice_deck_start_monitor', {
+        deviceId: deviceId ?? null,
+        x,
+        y,
+        z,
+        dimension,
+      }),
+    voiceDeckStopMonitor: () => invoke<void>('voice_deck_stop_monitor'),
+    voiceDeckPlayEvidence: (outputDir: string, deviceId?: string) =>
+      invoke<number>('voice_deck_play_evidence', {
+        outputDir,
+        deviceId: deviceId ?? null,
+      }),
+    planDbListBackups: (networkId: string) =>
+      invoke<PlanBackupEntry[]>('plan_db_list_backups', { networkId }),
+    planDbOptimize: () => invoke<void>('plan_db_optimize'),
+    planDbBackup: (networkId: string, label?: string) =>
+      invoke<PlanDbBackupResponse>('plan_db_backup', {
+        networkId,
+        label: label ?? null,
+      }),
+    planDbRestore: (backupPath: string) => invoke<void>('plan_db_restore', { backupPath }),
+    planDbRemovePlayer: (networkId: string, target: string) =>
+      invoke<number>('plan_db_remove_player', { networkId, target }),
+    planDbClearNetwork: (networkId: string) =>
+      invoke<number>('plan_db_clear_network', { networkId }),
+    planDbMarkServerUninstalled: (networkId: string, server: string) =>
+      invoke<boolean>('plan_db_mark_server_uninstalled', { networkId, server }),
+    planImportSignedExport: (networkId: string, exportPath: string) =>
+      invoke<PlanSyncReport>('plan_import_signed_export', { networkId, exportPath }),
   }
 }

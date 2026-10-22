@@ -1,0 +1,1 @@
+function e(){return`10000000-1000-4000-8000-100000000000`.replace(/[018]/g,e=>(Number(e)^crypto.getRandomValues(new Uint8Array(1))[0]&15>>Number(e)/4).toString(16))}export{e as t};

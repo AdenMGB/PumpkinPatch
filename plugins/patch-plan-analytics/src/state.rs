@@ -2,7 +2,7 @@ use patch_analytics_protocol::{
     apply_stat_increment, ActivitySample, AnalyticsEvent, AnalyticsPayload, DeathRecord,
     PatchPlanConfig, PerformanceSample, PingWindowRecord, PlayerStats, PvpKillRecord,
     ServerTotals, SessionRecord, SignedExport, WorldTimeSlice, EXPORT_FILENAME,
-    EXPORT_SCHEMA_VERSION, MAX_ACTIVITY_SAMPLES, MAX_COMPLETED_SESSIONS_PER_PLAYER,
+    CONFIG_FILENAME, EXPORT_SCHEMA_VERSION, MAX_ACTIVITY_SAMPLES, MAX_COMPLETED_SESSIONS_PER_PLAYER,
     MAX_EXPORT_PLAYERS, MAX_PERFORMANCE_SAMPLES, MAX_PING_WINDOWS_PER_PLAYER,
     MAX_RECENT_DEATHS, MAX_RECENT_EVENTS, MAX_RECENT_PVP_KILLS, MAX_SERVER_COMMAND_USAGE_KEYS,
     STATE_FILENAME,
@@ -28,6 +28,28 @@ where
     Some(f(&mut rt))
 }
 
+/// Runs `f` only when Plan analytics collection is enabled (`/plan disable` turns this off).
+pub fn with_analytics<F>(f: F) -> Option<()>
+where
+    F: FnOnce(&mut RuntimeState),
+{
+    with_runtime(|rt| {
+        if !rt.analytics_enabled {
+            return;
+        }
+        f(rt);
+    })
+}
+
+pub fn reload_config_from_disk(rt: &mut RuntimeState) -> Result<(), String> {
+    let config_path = format!("{}/{CONFIG_FILENAME}", rt.data_folder);
+    let raw = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    rt.config = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    rt.analytics_enabled = true;
+    rt.kick_counting_enabled = true;
+    Ok(())
+}
+
 pub struct RuntimeState {
     pub config: PatchPlanConfig,
     pub players: HashMap<String, PlayerStats>,
@@ -48,6 +70,22 @@ pub struct RuntimeState {
     pub pending_geolocation: HashMap<String, String>,
     pub online_ping: HashMap<String, OnlinePingTrack>,
     pub server_enabled_at: i64,
+    pub registration_completions: Vec<patch_analytics_protocol::RegistrationCompletion>,
+    pub web_admin_actions: Vec<patch_analytics_protocol::WebAdminAction>,
+    pub desktop_plan_requests: Vec<patch_analytics_protocol::DesktopPlanRequest>,
+    pub pending_db_op: Option<PendingDbOp>,
+    /// When false, telemetry handlers no-op (Plan `/plan disable`).
+    pub analytics_enabled: bool,
+    /// When false, kick events are not counted (`/plan disable <kickcount>` prelude).
+    pub kick_counting_enabled: bool,
+    pub vineyard_sink: Option<pumpkin_hook_sdk::TelemetrySink>,
+    pub voice_position_sink: Option<pumpkin_hook_sdk::VoicePositionSink>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PendingDbOp {
+    ClearNetwork,
+    RemovePlayer { target: String },
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +100,9 @@ const PING_SAMPLES_PER_WINDOW: usize = 30;
 
 /// Samples TPS from wall-clock between 100-tick plugin callbacks.
 pub fn sample_performance(rt: &mut RuntimeState, online: u32, tick_period: f64) {
+    if !rt.analytics_enabled {
+        return;
+    }
     let now = std::time::Instant::now();
     if let Some(prev) = rt.last_perf_instant {
         let elapsed = now.duration_since(prev).as_secs_f64();
@@ -82,9 +123,79 @@ pub fn sample_performance(rt: &mut RuntimeState, online: u32, tick_period: f64) 
                 let drain = rt.performance_samples.len() - MAX_PERFORMANCE_SAMPLES;
                 rt.performance_samples.drain(0..drain);
             }
+            emit_vineyard_telemetry(rt, online, mspt);
         }
     }
     rt.last_perf_instant = Some(now);
+}
+
+fn instance_root_from_data_folder(data_folder: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(data_folder);
+    path.parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+}
+
+fn server_id_bytes(server_id: &str) -> [u8; 16] {
+    uuid::Uuid::parse_str(server_id)
+        .map(|u| *u.as_bytes())
+        .unwrap_or([0u8; 16])
+}
+
+pub fn emit_vineyard_voice_position(
+    rt: &mut RuntimeState,
+    player: &Player,
+    x: f64,
+    y: f64,
+    z: f64,
+) {
+    let pid = player_id(player);
+    let player_uuid = uuid::Uuid::parse_str(&pid).ok();
+    let Some(player_uuid) = player_uuid else {
+        return;
+    };
+    let dimension = rt
+        .active_sessions
+        .get(&pid)
+        .map(|s| s.world_times.current_world.clone())
+        .unwrap_or_else(|| "minecraft:overworld".into());
+    if rt.voice_position_sink.is_none() {
+        rt.voice_position_sink =
+            Some(pumpkin_hook_sdk::VoicePositionSink::open(std::path::Path::new(
+                &rt.data_folder,
+            )));
+    }
+    let frame = vineyard_protocol::VoicePositionFrame {
+        player_uuid: *player_uuid.as_bytes(),
+        x,
+        y,
+        z,
+        yaw: 0.0,
+        pitch: 0.0,
+        dimension,
+    };
+    if let Some(sink) = &mut rt.voice_position_sink {
+        let _ = sink.emit(&frame);
+    }
+}
+
+fn emit_vineyard_telemetry(rt: &mut RuntimeState, online: u32, mspt: f64) {
+    let root = instance_root_from_data_folder(&rt.data_folder);
+    let root = match root {
+        Some(r) => r,
+        None => return,
+    };
+    if rt.vineyard_sink.is_none() {
+        let id = server_id_bytes(&rt.config.server_id);
+        rt.vineyard_sink = Some(pumpkin_hook_sdk::TelemetrySink::open(&id, &root));
+    }
+    if let Some(sink) = &mut rt.vineyard_sink {
+        let _ = sink.emit_host_sample(
+            online.min(u16::MAX as u32) as u16,
+            (mspt * 1000.0).clamp(0.0, 1_000_000.0) as u32,
+        );
+    }
 }
 
 pub fn unix_now() -> i64 {
@@ -159,6 +270,9 @@ fn flush_ping_track(rt: &mut RuntimeState, player_uuid: &str, track: &OnlinePing
 }
 
 pub fn sample_online_pings(rt: &mut RuntimeState, server: &Server) {
+    if !rt.analytics_enabled {
+        return;
+    }
     let now = unix_now();
     if now - rt.server_enabled_at < PING_SERVER_ENABLE_DELAY_SECS {
         return;
@@ -358,10 +472,25 @@ pub fn push_pvp_kill(
     }
 }
 
+pub fn player_afk_exempt(rt: &RuntimeState, player_uuid: &str) -> bool {
+    rt.config
+        .afk_exempt_uuids
+        .iter()
+        .any(|u| u.eq_ignore_ascii_case(player_uuid))
+}
+
+pub fn player_command_usage_exempt(rt: &RuntimeState, player_uuid: &str) -> bool {
+    rt.config
+        .command_usage_exempt_uuids
+        .iter()
+        .any(|u| u.eq_ignore_ascii_case(player_uuid))
+}
+
 pub fn session_activity(rt: &mut RuntimeState, player: &Player, now_ms: i64) {
     let id = player_id(player);
+    let ignore_afk = player_afk_exempt(rt, &id);
     if let Some(session) = rt.active_sessions.get_mut(&id) {
-        rt.afk_tracker.on_activity(&id, now_ms * 1000, false, session);
+        rt.afk_tracker.on_activity(&id, now_ms * 1000, ignore_afk, session);
     }
 }
 
@@ -527,6 +656,10 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
         command_usages: rt.command_usages.clone(),
         recent_pvp_kills: rt.recent_pvp_kills.clone(),
         performance_samples: rt.performance_samples.clone(),
+        registration_completions: rt.registration_completions.clone(),
+        web_admin_actions: rt.web_admin_actions.clone(),
+        desktop_plan_requests: rt.desktop_plan_requests.clone(),
+        is_proxy: rt.config.is_proxy,
     };
     let signature =
         patch_analytics_protocol::sign_payload(&payload, &rt.config.export_secret)?;
@@ -540,6 +673,56 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(tmp, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub fn queue_registration_completion(
+    rt: &mut RuntimeState,
+    code: &str,
+    player_uuid: &str,
+    player_name: &str,
+    grant_admin: bool,
+) {
+    rt.registration_completions.push(patch_analytics_protocol::RegistrationCompletion {
+        code: code.to_string(),
+        player_uuid: player_uuid.to_string(),
+        player_name: player_name.to_string(),
+        grant_admin,
+    });
+    if rt.registration_completions.len() > 32 {
+        let drain = rt.registration_completions.len() - 32;
+        rt.registration_completions.drain(0..drain);
+    }
+}
+
+pub fn drain_registration_completions(rt: &mut RuntimeState) {
+    rt.registration_completions.clear();
+}
+
+pub fn queue_web_admin_action(rt: &mut RuntimeState, action: patch_analytics_protocol::WebAdminAction) {
+    rt.web_admin_actions.push(action);
+    if rt.web_admin_actions.len() > 32 {
+        let drain = rt.web_admin_actions.len() - 32;
+        rt.web_admin_actions.drain(0..drain);
+    }
+}
+
+pub fn drain_web_admin_actions(rt: &mut RuntimeState) {
+    rt.web_admin_actions.clear();
+}
+
+pub fn queue_desktop_plan_request(
+    rt: &mut RuntimeState,
+    action: patch_analytics_protocol::DesktopPlanRequest,
+) {
+    rt.desktop_plan_requests.push(action);
+    if rt.desktop_plan_requests.len() > 16 {
+        let drain = rt.desktop_plan_requests.len() - 16;
+        rt.desktop_plan_requests.drain(0..drain);
+    }
+}
+
+pub fn drain_desktop_plan_requests(rt: &mut RuntimeState) {
+    rt.desktop_plan_requests.clear();
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -583,6 +766,374 @@ pub fn persist_state(rt: &RuntimeState) -> Result<(), String> {
 pub fn load_persisted_state(path: &str) -> Result<PersistedState, String> {
     let raw = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+fn count_players_with_activity_group(
+    rt: &RuntimeState,
+    group: patch_plan_core::ActivityGroup,
+) -> u64 {
+    let now_ms = unix_now() * 1000;
+    rt.players
+        .values()
+        .filter(|p| {
+            let triples: Vec<(i64, i64, u64)> = p
+                .completed_sessions
+                .iter()
+                .map(|s| (s.start_unix * 1000, s.end_unix * 1000, s.afk_secs * 1000))
+                .collect();
+            let (w1, w2, w3) =
+                patch_plan_core::active_playtime_in_weeks(&triples, now_ms);
+            let ai = patch_plan_core::ActivityIndex::calculate(
+                w1,
+                w2,
+                w3,
+                patch_plan_core::DEFAULT_PLAYTIME_THRESHOLD_MS,
+            );
+            ai.group == group
+        })
+        .count() as u64
+}
+
+pub fn placeholder_context_for(
+    rt: &RuntimeState,
+    target_uuid: &str,
+    online: u32,
+) -> patch_plan_core::PlanPlaceholderContext {
+    let now_ms = unix_now() * 1000;
+    let now = unix_now();
+
+    let top_for_cutoff = |cutoff_unix: i64| -> Vec<(String, u64, u64)> {
+        let rows: Vec<(String, u64, u64)> = rt
+            .players
+            .values()
+            .map(|p| {
+                if cutoff_unix <= 0 {
+                    (p.name.clone(), p.playtime_secs, p.afk_time_secs)
+                } else {
+                    let (total, afk) = session_playtime_since(p, cutoff_unix);
+                    (p.name.clone(), total, afk)
+                }
+            })
+            .collect();
+        patch_plan_core::sort_top_playtime(rows, 10)
+    };
+
+    let top = top_for_cutoff(0);
+    let top_day = top_for_cutoff(now - 86_400);
+    let top_week = top_for_cutoff(now - 7 * 86_400);
+    let top_month = top_for_cutoff(now - 30 * 86_400);
+    let avg_tps_since = |cutoff: i64| -> Option<f64> {
+        let samples: Vec<f64> = rt
+            .performance_samples
+            .iter()
+            .filter(|s| s.t >= cutoff)
+            .map(|s| s.ticks_per_second)
+            .collect();
+        if samples.is_empty() {
+            None
+        } else {
+            Some(samples.iter().sum::<f64>() / samples.len() as f64)
+        }
+    };
+    let avg_tps_day = avg_tps_since(now - 86_400);
+    let avg_tps_week = avg_tps_since(now - 7 * 86_400);
+    let avg_tps_month = avg_tps_since(now - 30 * 86_400);
+
+    let count_first_seen_since = |cutoff: i64| {
+        rt.players
+            .values()
+            .filter(|p| p.first_seen_unix >= cutoff)
+            .count() as u64
+    };
+    let count_active_since = |cutoff: i64| {
+        rt.players
+            .values()
+            .filter(|p| p.last_seen_unix >= cutoff)
+            .count() as u64
+    };
+    let count_sessions_since = |cutoff: i64| {
+        rt.players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.start_unix >= cutoff)
+            .count() as u64
+    };
+    let avg_session_len_since = |cutoff: i64| -> u64 {
+        let sessions: Vec<u64> = rt
+            .players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.end_unix >= cutoff)
+            .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
+            .collect();
+        if sessions.is_empty() {
+            0
+        } else {
+            sessions.iter().sum::<u64>() / sessions.len() as u64
+        }
+    };
+    let unique_players_since = |cutoff: i64| -> u64 {
+        rt.players
+            .values()
+            .filter(|p| p.last_seen_unix >= cutoff)
+            .count() as u64
+    };
+    let playtime_in_window = |cutoff: i64| -> u64 {
+        rt.players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.end_unix >= cutoff)
+            .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
+            .sum()
+    };
+    let afk_in_window = |cutoff: i64| -> u64 {
+        rt.players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.end_unix >= cutoff)
+            .map(|s| s.afk_secs)
+            .sum()
+    };
+
+    let peak_sample = rt
+        .activity_samples
+        .iter()
+        .max_by_key(|s| s.online);
+    let peak_date_recent = peak_sample
+        .map(|s| s.t.to_string())
+        .unwrap_or_else(|| now.to_string());
+    let peak_date_alltime = peak_date_recent.clone();
+
+    let tps_spikes_since = |cutoff: i64| -> u32 {
+        rt.performance_samples
+            .iter()
+            .filter(|s| s.t >= cutoff && s.ticks_per_second < 15.0)
+            .count() as u32
+    };
+    let tps_spikes_day = tps_spikes_since(now - 86_400);
+    let tps_spikes_week = tps_spikes_since(now - 7 * 86_400);
+    let tps_spikes_month = tps_spikes_since(now - 30 * 86_400);
+
+    let (sessions_playtime_secs, sessions_afk_secs) = rt.players.values().fold((0u64, 0u64), |acc, p| {
+        (
+            acc.0 + p.playtime_secs,
+            acc.1 + p.afk_time_secs,
+        )
+    });
+    let sessions_active_secs = sessions_playtime_secs.saturating_sub(sessions_afk_secs);
+
+    let ping_stats_for_cutoff = |cutoff: i64| -> (Option<f64>, Option<u32>, Option<u32>) {
+        let mut sum = 0f64;
+        let mut n = 0u64;
+        let mut min = None;
+        let mut max = None;
+        for p in rt.players.values() {
+            for w in &p.ping_windows {
+                if w.t_unix < cutoff {
+                    continue;
+                }
+                sum += w.avg_ping as f64;
+                n += 1;
+                min = Some(min.map_or(w.min_ping, |m: u32| m.min(w.min_ping)));
+                max = Some(max.map_or(w.max_ping, |m: u32| m.max(w.max_ping)));
+            }
+        }
+        let avg = if n > 0 { Some(sum / n as f64) } else { None };
+        (avg, min, max)
+    };
+    let (avg_ping_day, min_ping_day, max_ping_day) = ping_stats_for_cutoff(now - 86_400);
+    let (avg_ping_week, _, _) = ping_stats_for_cutoff(now - 7 * 86_400);
+    let (avg_ping_month, _, _) = ping_stats_for_cutoff(now - 30 * 86_400);
+
+    let entry = rt.players.get(target_uuid);
+    let session_triples = entry
+        .map(|e| {
+            e.completed_sessions
+                .iter()
+                .map(|s| {
+                    (
+                        s.start_unix * 1000,
+                        s.end_unix * 1000,
+                        s.afk_secs * 1000,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let combat_in_window = |cutoff: i64| -> (u64, u64, u64) {
+        let mut deaths = 0u64;
+        let mut mob = 0u64;
+        let mut pvp = 0u64;
+        for p in rt.players.values() {
+            for s in &p.completed_sessions {
+                if s.end_unix >= cutoff {
+                    deaths += s.deaths as u64;
+                    mob += s.mob_kills as u64;
+                }
+            }
+            if p.last_seen_unix >= cutoff {
+                pvp += p.player_kills;
+            }
+        }
+        (deaths, mob, pvp)
+    };
+    let (deaths_day, mob_day, pvp_day) = combat_in_window(now - 86_400);
+    let (deaths_week, mob_week, pvp_week) = combat_in_window(now - 7 * 86_400);
+    let (deaths_month, mob_month, pvp_month) = combat_in_window(now - 30 * 86_400);
+    let deaths_total = rt.players.values().map(|p| p.deaths).sum();
+    let mob_kills_total = rt.players.values().map(|p| p.mob_kills).sum();
+    let player_kills_total = rt.players.values().map(|p| p.player_kills).sum();
+
+    let player_recent_kills: Vec<(String, String)> = rt
+        .recent_pvp_kills
+        .iter()
+        .filter(|k| k.killer_uuid == target_uuid)
+        .take(10)
+        .map(|k| (k.victim_name.clone(), k.weapon.clone()))
+        .collect();
+
+    let player_session_length_longest_secs = entry
+        .map(|e| {
+            e.completed_sessions
+                .iter()
+                .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+
+    let (player_ping_avg, player_ping_min, player_ping_max) = entry
+        .map(|e| {
+            let mut sum = 0f64;
+            let mut n = 0u64;
+            let mut min = None;
+            let mut max = None;
+            for w in &e.ping_windows {
+                if w.t_unix < now - 86_400 {
+                    continue;
+                }
+                sum += w.avg_ping as f64;
+                n += 1;
+                min = Some(min.map_or(w.min_ping, |m| m.min(w.min_ping)));
+                max = Some(max.map_or(w.max_ping, |m| m.max(w.max_ping)));
+            }
+            let avg = if n > 0 { Some(sum / n as f64) } else { None };
+            (avg, min, max)
+        })
+        .unwrap_or((None, None, None));
+
+    patch_plan_core::PlanPlaceholderContext {
+        server_name: rt.config.server_name.clone(),
+        server_uuid: rt.config.server_id.clone(),
+        players_online: online,
+        players_total: rt.players.len() as u64,
+        peak_online: rt.peak_online,
+        total_joins: rt.total_joins,
+        player_name: entry.map(|e| e.name.clone()),
+        player_uuid: Some(target_uuid.to_string()),
+        playtime_secs: entry.map(|e| e.playtime_secs).unwrap_or(0),
+        afk_secs: entry.map(|e| e.afk_time_secs).unwrap_or(0),
+        deaths: entry.map(|e| e.deaths as u32).unwrap_or(0),
+        player_kills: entry.map(|e| e.player_kills as u32).unwrap_or(0),
+        mob_kills: entry.map(|e| e.mob_kills as u32).unwrap_or(0),
+        kick_count: entry.map(|e| e.kick_count as u32).unwrap_or(0),
+        geolocation: entry
+            .map(|e| e.geolocation.clone())
+            .unwrap_or_default(),
+        registered_unix: entry.map(|e| e.first_seen_unix).unwrap_or(0),
+        last_seen_unix: entry.map(|e| e.last_seen_unix).unwrap_or(0),
+        session_triples,
+        now_ms,
+        avg_tps_day,
+        avg_tps_week,
+        avg_tps_month,
+        avg_ping_day,
+        avg_ping_week,
+        avg_ping_month,
+        min_ping_day,
+        max_ping_day,
+        player_ping_avg,
+        player_ping_min,
+        player_ping_max,
+        players_new_day: count_first_seen_since(now - 86_400),
+        players_new_week: count_first_seen_since(now - 7 * 86_400),
+        players_new_month: count_first_seen_since(now - 30 * 86_400),
+        players_unique_day: count_active_since(now - 86_400),
+        players_unique_week: count_active_since(now - 7 * 86_400),
+        players_unique_month: count_active_since(now - 30 * 86_400),
+        sessions_playtime_secs,
+        sessions_active_secs,
+        sessions_afk_secs,
+        sessions_count_day: count_sessions_since(now - 86_400),
+        sessions_count_week: count_sessions_since(now - 7 * 86_400),
+        sessions_count_month: count_sessions_since(now - 30 * 86_400),
+        timezone_offset: "UTC".into(),
+        player_recent_kills,
+        deaths_total,
+        deaths_day,
+        deaths_week,
+        deaths_month,
+        mob_kills_total,
+        mob_kills_day: mob_day,
+        mob_kills_week: mob_week,
+        mob_kills_month: mob_month,
+        player_kills_total,
+        player_kills_day: pvp_day,
+        player_kills_week: pvp_week,
+        player_kills_month: pvp_month,
+        sessions_playtime_day: playtime_in_window(now - 86_400),
+        sessions_playtime_week: playtime_in_window(now - 7 * 86_400),
+        sessions_playtime_month: playtime_in_window(now - 30 * 86_400),
+        sessions_active_day: playtime_in_window(now - 86_400)
+            .saturating_sub(afk_in_window(now - 86_400)),
+        sessions_active_week: playtime_in_window(now - 7 * 86_400)
+            .saturating_sub(afk_in_window(now - 7 * 86_400)),
+        sessions_active_month: playtime_in_window(now - 30 * 86_400)
+            .saturating_sub(afk_in_window(now - 30 * 86_400)),
+        sessions_afk_day: afk_in_window(now - 86_400),
+        sessions_afk_week: afk_in_window(now - 7 * 86_400),
+        sessions_afk_month: afk_in_window(now - 30 * 86_400),
+        peak_online_date_alltime: peak_date_alltime,
+        peak_online_date_recent: peak_date_recent,
+        favorite_server: rt.config.server_name.clone(),
+        tps_spikes_day,
+        tps_spikes_week,
+        tps_spikes_month,
+        sessions_avg_length_day: avg_session_len_since(now - 86_400),
+        sessions_avg_length_week: avg_session_len_since(now - 7 * 86_400),
+        sessions_avg_length_month: avg_session_len_since(now - 30 * 86_400),
+        sessions_avg_unique_players_day: unique_players_since(now - 86_400),
+        sessions_avg_unique_players_week: unique_players_since(now - 7 * 86_400),
+        sessions_avg_unique_players_month: unique_players_since(now - 30 * 86_400),
+        player_is_banned: entry.map(|e| e.banned).unwrap_or(false),
+        player_is_operator: entry.map(|e| e.operator).unwrap_or(false),
+        player_session_length_longest_secs,
+        players_regular: count_players_with_activity_group(
+            rt,
+            patch_plan_core::ActivityGroup::Regular,
+        ),
+        top_playtime: top,
+        top_playtime_day: top_day,
+        top_playtime_week: top_week,
+        top_playtime_month: top_month,
+    }
+}
+
+fn session_playtime_since(p: &patch_analytics_protocol::PlayerStats, cutoff_unix: i64) -> (u64, u64) {
+    let mut total = 0u64;
+    let mut afk = 0u64;
+    for s in &p.completed_sessions {
+        if s.end_unix < cutoff_unix {
+            continue;
+        }
+        let start = s.start_unix.max(cutoff_unix);
+        let span = (s.end_unix - start).max(0) as u64;
+        let afk_clip = s.afk_secs.min(span);
+        afk += afk_clip;
+        total += span;
+    }
+    (total, afk)
 }
 
 pub fn gamemode_label(mode: pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMode) -> String {

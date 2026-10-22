@@ -1,0 +1,14 @@
+[package]
+name = "tendril-audio-deck"
+version = "0.1.0"
+edition.workspace = true
+description = "cpal/rodio admin voice monitor for TendrilVoice (plangem.md §5.1)"
+
+[dependencies]
+cpal = "0.15"
+opus-pure = "0.2.2"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

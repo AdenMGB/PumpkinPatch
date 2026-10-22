@@ -1,0 +1,1 @@
+var e=`/static/Flaticon_circle-C0zpDQAf.png`;export{e as t};

@@ -1,0 +1,18 @@
+[package]
+name = "stem-agent"
+version = "0.1.0"
+edition.workspace = true
+description = "Headless Pumpkin Patch fleet node agent (plangem.md §1.1)"
+
+[[bin]]
+name = "stem-agent"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "io-util"] }
+vineyard-bus = { path = "../vineyard-bus" }
+vineyard-protocol = { path = "../vineyard-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gourd-proxy = { path = "../gourd-proxy" }

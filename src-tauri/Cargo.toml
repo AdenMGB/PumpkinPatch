@@ -14,6 +14,17 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 patch-core = { path = "../crates/patch-core" }
+patch-plan-http = { path = "../crates/patch-plan-http" }
+vineyard-protocol = { path = "../crates/vineyard-protocol" }
+velocity-bridge = { path = "../crates/velocity-bridge" }
+patch-plugin-resolve = { path = "../crates/patch-plugin-resolve" }
+crow-swarm = { path = "../crates/crow-swarm" }
+patch-cas = { path = "../crates/patch-cas" }
+patchwork = { path = "../crates/patchwork" }
+patch-audit = { path = "../crates/patch-audit" }
+tendril-voice = { path = "../crates/tendril-voice" }
+tendril-audio-deck = { path = "../crates/tendril-audio-deck" }
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-os = "2"
@@ -21,5 +32,4 @@ tauri-plugin-window-state = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["sync"] }
 uuid = { version = "1", features = ["serde"] }

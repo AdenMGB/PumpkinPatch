@@ -143,6 +143,32 @@ pub async fn network_start(
     )
     .await;
 
+    let bridge_bind = format!("{}:25589", settings.bind_host);
+    if let Ok(addr) = bridge_bind.parse() {
+        let bridge = inner.velocity_bridge.clone();
+        static BRIDGE_STARTED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !BRIDGE_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            tokio::spawn(async move {
+                let _ = bridge.serve(addr).await;
+            });
+        }
+    }
+
+    let gourd_voice = if settings.gourd_enabled && settings.tendril_voice_auto_gourd {
+        let bind = format!(
+            "{}:{}",
+            settings.bind_host,
+            settings.tendril_voice_udp_port
+        );
+        let addr: std::net::SocketAddr = bind
+            .parse()
+            .map_err(|e| patch_core::Error::InvalidState(format!("invalid voice bind: {e}")))?;
+        Some(super::voice::prepare_gourd_voice_launch(&state, addr, None).await?)
+    } else {
+        None
+    };
+
     let mut processes = inner.processes.write().await;
     processes
         .start_network(
@@ -152,10 +178,20 @@ pub async fn network_start(
             velocity,
             &java_path,
             &settings.bind_host,
+            settings.gourd_enabled,
+            gourd_voice,
             &inner.networks,
             Some(log_tx),
         )
         .await?;
+    for server in &servers {
+        let voice_path = std::path::PathBuf::from(&server.data_path).join("vineyard-voice.bin");
+        patch_core::telemetry_bus::spawn_instance_voice_position_tail(
+            inner.vineyard_bus.clone(),
+            voice_path,
+        );
+    }
+    drop(processes);
     let _ = app.emit("network-started", id);
     Ok(())
 }

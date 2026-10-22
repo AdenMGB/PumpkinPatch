@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Plan — Theme editor</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; background: #0f172a; color: #e2e8f0; }
+    textarea { width: 100%; min-height: 16rem; font-family: ui-monospace, monospace; font-size: 0.85rem; background: #1e293b; color: #f8fafc; border: 1px solid #475569; border-radius: 0.35rem; padding: 0.75rem; }
+    button { margin-top: 0.75rem; padding: 0.5rem 1rem; background: #f97316; border: none; border-radius: 0.35rem; font-weight: 600; cursor: pointer; }
+    a { color: #f97316; }
+    #msg { color: #94a3b8; margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <h1>Theme editor</h1>
+  <p>Requires Plan session with <code>access.theme.editor</code>. Themes are JSON (see <code>/v1/theme?name=default</code>).</p>
+  <label>Theme name <input id="name" value="default" /></label>
+  <textarea id="json"></textarea>
+  <button type="button" id="load">Load theme</button>
+  <button type="button" id="save">Save to browser</button>
+  <p id="msg"></p>
+  <p><a href="/app">Dashboard</a></p>
+  <script>
+    const msg = document.getElementById('msg');
+    document.getElementById('load').onclick = async () => {
+      const name = document.getElementById('name').value.trim() || 'default';
+      const r = await fetch('/v1/theme?name=' + encodeURIComponent(name));
+      const j = await r.json();
+      document.getElementById('json').value = JSON.stringify(j, null, 2);
+      msg.textContent = 'Loaded ' + name;
+    };
+    document.getElementById('save').onclick = async () => {
+      try {
+        const name = document.getElementById('name').value.trim() || 'custom';
+        const theme = JSON.parse(document.getElementById('json').value);
+        const r = await fetch('/v1/theme', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, theme }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        msg.textContent = 'Saved theme ' + name + ' on server';
+      } catch (e) { msg.textContent = String(e.message || e); }
+    };
+    document.getElementById('load').click();
+  </script>
+</body>
+</html>

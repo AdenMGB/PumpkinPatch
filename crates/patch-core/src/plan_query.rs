@@ -1,9 +1,9 @@
 //! Plan /v1/query and /v1/filters subset for the desktop app.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::plan_store::{list_players_table, PlanPlayerTableRow};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Column, Row, SqlitePool};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanFilterTypeInfo {
@@ -18,6 +18,8 @@ pub struct PlanFiltersCatalog {
     pub join_addresses: Vec<String>,
     pub geolocations: Vec<String>,
     pub filter_types: Vec<PlanFilterTypeInfo>,
+    #[serde(default)]
+    pub extension_providers: Vec<crate::plan_extension::ExtensionQueryProvider>,
 }
 
 const QUERY_CACHE_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -47,6 +49,28 @@ pub struct PlanQueryRequest {
     pub played_before_ms: Option<i64>,
     #[serde(default)]
     pub played_server_uuids: Vec<String>,
+    /// `Banned` / `Not banned` (Plan `/v1/filters`).
+    #[serde(default)]
+    pub banned: Vec<String>,
+    /// `Operators` / `Non-operators`.
+    #[serde(default)]
+    pub operators: Vec<String>,
+    /// Plan React `pluginsBooleanGroups` extension filters.
+    #[serde(default, rename = "pluginsBooleanGroups")]
+    pub plugins_boolean_groups: Vec<crate::plan_extension::PluginBooleanGroupFilter>,
+    /// Plan React `pluginNumbers` extension range filters.
+    #[serde(default, rename = "pluginNumbers")]
+    pub plugin_numbers: Vec<crate::plan_extension::PluginNumberFilter>,
+    /// Historical activity index filter (`activityIndexOn` in Plan React).
+    #[serde(default, rename = "activityIndexOn")]
+    pub activity_index_on: Option<ActivityIndexOnFilter>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ActivityIndexOnFilter {
+    pub date: Option<i64>,
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -189,22 +213,46 @@ pub async fn plan_filters_catalog(
             implemented: true,
         },
         PlanFilterTypeInfo {
+            id: "playedOnServer".into(),
+            label: "Played on server(s)".into(),
+            implemented: true,
+        },
+        PlanFilterTypeInfo {
             id: "banned".into(),
             label: "Ban status".into(),
-            implemented: false,
+            implemented: true,
         },
         PlanFilterTypeInfo {
             id: "operators".into(),
             label: "Operator status".into(),
-            implemented: false,
+            implemented: true,
+        },
+        PlanFilterTypeInfo {
+            id: "activityIndexOn".into(),
+            label: "Activity index on historical date".into(),
+            implemented: true,
+        },
+        PlanFilterTypeInfo {
+            id: "pluginsBooleanGroups".into(),
+            label: "DataExtension boolean / group filters".into(),
+            implemented: true,
+        },
+        PlanFilterTypeInfo {
+            id: "pluginNumbers".into(),
+            label: "DataExtension numeric range filters".into(),
+            implemented: true,
         },
     ];
+
+    crate::plan_extension::ensure_builtin_extensions();
+    let extension_providers = crate::plan_extension::extension_filter_provider_catalog();
 
     Ok(PlanFiltersCatalog {
         activity_groups: groups,
         join_addresses,
         geolocations,
         filter_types,
+        extension_providers,
     })
 }
 
@@ -304,8 +352,17 @@ async fn run_plan_query_uncached(
 ) -> Result<PlanQueryResult> {
     let mut players = list_players_table(pool, network_id, server_uuid, 2000).await?;
     apply_query_filters(&mut players, request);
+    apply_activity_index_on_filter(pool, &mut players, request).await?;
+    crate::plan_extension::filter_players_by_extension_query(
+        &mut players,
+        &request.plugins_boolean_groups,
+        &request.plugin_numbers,
+    );
     if request.played_after_ms.is_some() || request.played_before_ms.is_some() {
         let active = uuids_played_between(pool, network_id, server_uuid, request).await?;
+        players.retain(|p| active.contains(&p.uuid));
+    } else if !request.played_server_uuids.is_empty() {
+        let active = uuids_played_on_servers(pool, network_id, &request.played_server_uuids).await?;
         players.retain(|p| active.contains(&p.uuid));
     }
 
@@ -349,6 +406,36 @@ async fn run_plan_query_uncached(
         from_cache: false,
         cohort_view,
     })
+}
+
+async fn uuids_played_on_servers(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuids: &[String],
+) -> Result<std::collections::HashSet<String>> {
+    if server_uuids.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let placeholders = server_uuids
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT DISTINCT u.uuid FROM plan_sessions sess
+         JOIN plan_users u ON u.id = sess.user_id
+         JOIN plan_servers s ON s.id = sess.server_id
+         WHERE s.network_id = ? AND s.uuid IN ({placeholders})"
+    );
+    let mut query = sqlx::query(&sql).bind(network_id);
+    for uuid in server_uuids {
+        query = query.bind(uuid);
+    }
+    let rows = query.fetch_all(pool).await?;
+    Ok(rows
+        .iter()
+        .map(|r| r.get::<String, _>("uuid"))
+        .collect())
 }
 
 async fn uuids_played_between(
@@ -477,9 +564,164 @@ async fn compute_cohort_view(
     })
 }
 
+const QUERY_WRITE_TABLES: &[&str] = &[
+    "plan_statistic_totals",
+    "plan_user_statistic_totals",
+    "plan_commandusages",
+    "plan_extension_user_values",
+    "plan_extension_server_values",
+    "plan_extension_groups",
+    "plan_extension_tables",
+    "plan_extension_table_rows",
+];
+
+/// APIv5 QueryService write path — allowlisted extension/stat tables only.
+pub async fn execute_plan_sql_write(pool: &SqlitePool, sql: &str) -> Result<u64> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidState("empty SQL".into()));
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    if !(upper.starts_with("INSERT")
+        || upper.starts_with("UPDATE")
+        || upper.starts_with("DELETE")
+        || upper.starts_with("REPLACE"))
+    {
+        return Err(Error::InvalidState(
+            "write queries must be INSERT, UPDATE, DELETE, or REPLACE".into(),
+        ));
+    }
+    if trimmed.contains(';') {
+        return Err(Error::InvalidState("multiple SQL statements are not permitted".into()));
+    }
+    for forbidden in ["DROP ", "ATTACH ", "ALTER ", "CREATE ", "PRAGMA ", "VACUUM", "TRUNCATE "] {
+        if upper.contains(forbidden) {
+            return Err(Error::InvalidState(format!(
+                "forbidden keyword in write query: {}",
+                forbidden.trim()
+            )));
+        }
+    }
+    if !QUERY_WRITE_TABLES
+        .iter()
+        .any(|table| trimmed.to_ascii_lowercase().contains(table))
+    {
+        return Err(Error::InvalidState(
+            "write query must target plan_statistic_totals, plan_user_statistic_totals, or plan_commandusages"
+                .into(),
+        ));
+    }
+    let result = sqlx::query(trimmed).execute(pool).await?;
+    Ok(result.rows_affected())
+}
+
+/// APIv5 QueryService read path — single `SELECT` only (no writes).
+pub async fn execute_readonly_sql(pool: &SqlitePool, sql: &str) -> Result<Vec<serde_json::Value>> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidState("empty SQL".into()));
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    if !upper.starts_with("SELECT") {
+        return Err(Error::InvalidState("only SELECT queries are permitted".into()));
+    }
+    if trimmed.contains(';') {
+        return Err(Error::InvalidState("multiple SQL statements are not permitted".into()));
+    }
+    for forbidden in [
+        "INSERT ", "UPDATE ", "DELETE ", "DROP ", "ATTACH ", "ALTER ", "CREATE ", "REPLACE ",
+        "PRAGMA ", "VACUUM",
+    ] {
+        if upper.contains(forbidden) {
+            return Err(Error::InvalidState(format!(
+                "forbidden keyword in read-only query: {}",
+                forbidden.trim()
+            )));
+        }
+    }
+    let rows = sqlx::query(trimmed).fetch_all(pool).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let cols = row.columns();
+        let mut obj = serde_json::Map::new();
+        for (idx, col) in cols.iter().enumerate() {
+            let name = col.name();
+            obj.insert(name.to_string(), sqlite_cell_json(&row, idx));
+        }
+        out.push(serde_json::Value::Object(obj));
+    }
+    Ok(out)
+}
+
+fn sqlite_cell_json(row: &sqlx::sqlite::SqliteRow, idx: usize) -> serde_json::Value {
+    use sqlx::ValueRef;
+    if let Ok(raw) = row.try_get_raw(idx) {
+        if raw.is_null() {
+            return serde_json::Value::Null;
+        }
+    }
+    if let Ok(v) = row.try_get::<i64, _>(idx) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(idx) {
+        return serde_json::Number::from_f64(v)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null);
+    }
+    if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+        return serde_json::Value::String(String::from_utf8_lossy(&v).into_owned());
+    }
+    row.try_get::<String, _>(idx)
+        .ok()
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn activity_index_at_ms(triples: &[(i64, i64, u64)], at_ms: i64) -> patch_plan_core::ActivityIndex {
+    use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
+    let (w1, w2, w3) = active_playtime_in_weeks(triples, at_ms);
+    ActivityIndex::calculate(w1, w2, w3, DEFAULT_PLAYTIME_THRESHOLD_MS)
+}
+
+async fn apply_activity_index_on_filter(
+    pool: &SqlitePool,
+    players: &mut Vec<PlanPlayerTableRow>,
+    request: &PlanQueryRequest,
+) -> Result<()> {
+    let Some(filter) = &request.activity_index_on else {
+        return Ok(());
+    };
+    let Some(at_ms) = filter.date else {
+        return Ok(());
+    };
+    for player in players.iter_mut() {
+        let triples = crate::plan_store::session_triples_for_user(pool, &player.uuid).await?;
+        let ai = activity_index_at_ms(&triples, at_ms);
+        player.activity_index = ai.value;
+        player.activity_group = ai.group.label().to_string();
+    }
+    if !filter.groups.is_empty() {
+        players.retain(|p| filter.groups.iter().any(|g| g == &p.activity_group));
+    } else if !request.activity_groups.is_empty() {
+        players.retain(|p| request.activity_groups.iter().any(|g| g == &p.activity_group));
+    }
+    if let Some(min) = request.min_activity_index {
+        players.retain(|p| p.activity_index >= min);
+    }
+    if let Some(max) = request.max_activity_index {
+        players.retain(|p| p.activity_index <= max);
+    }
+    Ok(())
+}
+
 /// In-memory filter used by `execute_plan_query` (unit-tested).
 pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &PlanQueryRequest) {
-    if !request.activity_groups.is_empty() {
+    let historical_ai = request
+        .activity_index_on
+        .as_ref()
+        .and_then(|f| f.date)
+        .is_some();
+    if !historical_ai && !request.activity_groups.is_empty() {
         players.retain(|p| request.activity_groups.iter().any(|g| g == &p.activity_group));
     }
     if !request.join_addresses.is_empty() {
@@ -490,11 +732,13 @@ pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &Plan
                 .any(|j| j.eq_ignore_ascii_case(&p.join_address))
         });
     }
-    if let Some(min) = request.min_activity_index {
-        players.retain(|p| p.activity_index >= min);
-    }
-    if let Some(max) = request.max_activity_index {
-        players.retain(|p| p.activity_index <= max);
+    if !historical_ai {
+        if let Some(min) = request.min_activity_index {
+            players.retain(|p| p.activity_index >= min);
+        }
+        if let Some(max) = request.max_activity_index {
+            players.retain(|p| p.activity_index <= max);
+        }
     }
     if let Some(min) = request.min_sessions {
         players.retain(|p| p.sessions >= min);
@@ -519,6 +763,24 @@ pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &Plan
     if let Some(before) = request.last_seen_before_ms {
         players.retain(|p| p.last_seen <= before);
     }
+    if request.banned.iter().any(|b| b.eq_ignore_ascii_case("Banned")) {
+        players.retain(|p| p.banned);
+    } else if request
+        .banned
+        .iter()
+        .any(|b| b.eq_ignore_ascii_case("Not banned"))
+    {
+        players.retain(|p| !p.banned);
+    }
+    if request.operators.iter().any(|b| b.eq_ignore_ascii_case("Operators")) {
+        players.retain(|p| p.operator);
+    } else if request
+        .operators
+        .iter()
+        .any(|b| b.eq_ignore_ascii_case("Non-operators"))
+    {
+        players.retain(|p| !p.operator);
+    }
 }
 
 #[cfg(test)]
@@ -542,7 +804,42 @@ mod tests {
             ping_max: 0,
             nick: String::new(),
             kick_count: 0,
+            banned: false,
+            operator: false,
         }
+    }
+
+    #[test]
+    fn filters_by_banned() {
+        let mut players = vec![
+            sample_player("Active", 50.0, "a"),
+            PlanPlayerTableRow {
+                name: "Banned".into(),
+                uuid: "b".into(),
+                activity_index: 10.0,
+                activity_group: "Inactive".into(),
+                active_playtime_ms: 0,
+                sessions: 1,
+                registered: 1,
+                last_seen: 0,
+                join_address: "a".into(),
+                geolocation: String::new(),
+                ping_avg: 0,
+                ping_min: 0,
+                ping_max: 0,
+                nick: String::new(),
+                kick_count: 0,
+                banned: true,
+                operator: false,
+            },
+        ];
+        let req = PlanQueryRequest {
+            banned: vec!["Banned".into()],
+            ..PlanQueryRequest::default()
+        };
+        apply_query_filters(&mut players, &req);
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[0].name, "Banned");
     }
 
     #[test]
@@ -553,21 +850,8 @@ mod tests {
         ];
         let req = PlanQueryRequest {
             activity_groups: vec!["Active".into()],
-            join_addresses: vec![],
             min_activity_index: Some(40.0),
-            max_activity_index: None,
-            min_sessions: None,
-            registered_after_ms: None,
-            registered_before_ms: None,
-            geolocations: vec![],
-            bypass_cache: false,
-            view_after_ms: None,
-            view_before_ms: None,
-            last_seen_after_ms: None,
-            last_seen_before_ms: None,
-            played_after_ms: None,
-            played_before_ms: None,
-            played_server_uuids: vec![],
+            ..PlanQueryRequest::default()
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
@@ -594,26 +878,14 @@ mod tests {
                 ping_max: 0,
                 nick: String::new(),
                 kick_count: 0,
+                banned: false,
+                operator: false,
             },
         ];
         players[0].sessions = 1;
         let req = PlanQueryRequest {
-            activity_groups: vec![],
-            join_addresses: vec![],
-            min_activity_index: None,
-            max_activity_index: None,
             min_sessions: Some(3),
-            registered_after_ms: None,
-            registered_before_ms: None,
-            geolocations: vec![],
-            bypass_cache: false,
-            view_after_ms: None,
-            view_before_ms: None,
-            last_seen_after_ms: None,
-            last_seen_before_ms: None,
-            played_after_ms: None,
-            played_before_ms: None,
-            played_server_uuids: vec![],
+            ..PlanQueryRequest::default()
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
@@ -640,29 +912,126 @@ mod tests {
                 ping_max: 0,
                 nick: String::new(),
                 kick_count: 0,
+                banned: false,
+                operator: false,
             },
         ];
         players[0].last_seen = 500;
         let req = PlanQueryRequest {
-            activity_groups: vec![],
-            join_addresses: vec![],
-            min_activity_index: None,
-            max_activity_index: None,
-            min_sessions: None,
-            registered_after_ms: None,
-            registered_before_ms: None,
-            geolocations: vec![],
-            bypass_cache: false,
-            view_after_ms: None,
-            view_before_ms: None,
             last_seen_after_ms: Some(100),
-            last_seen_before_ms: None,
-            played_after_ms: None,
-            played_before_ms: None,
-            played_server_uuids: vec![],
+            ..PlanQueryRequest::default()
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
         assert_eq!(players[0].name, "Steve");
+    }
+
+    #[test]
+    fn activity_index_on_defers_current_activity_group_filter() {
+        let mut players = vec![sample_player("Active", 50.0, "a")];
+        let req = PlanQueryRequest {
+            activity_groups: vec!["Inactive".into()],
+            activity_index_on: Some(ActivityIndexOnFilter {
+                date: Some(1_700_000_000_000),
+                groups: vec![],
+            }),
+            ..PlanQueryRequest::default()
+        };
+        apply_query_filters(&mut players, &req);
+        assert_eq!(players.len(), 1);
+    }
+
+    #[test]
+    fn activity_index_at_ms_uses_session_windows() {
+        use patch_plan_core::ONE_WEEK_MS;
+        let at_ms = 3 * ONE_WEEK_MS;
+        let triples = vec![(at_ms - 86_400_000, at_ms - 43_200_000, 0)];
+        let ai = activity_index_at_ms(&triples, at_ms);
+        assert!(ai.value > 0.0);
+    }
+
+    #[tokio::test]
+    async fn played_on_server_filter_limits_cohort() {
+        use crate::plan_store::ensure_plan_schema;
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory sqlite");
+        ensure_plan_schema(&pool).await.expect("schema");
+        sqlx::query(
+            "INSERT INTO plan_servers (uuid, network_id, name) VALUES ('srv-a', 'net', 'A'), ('srv-b', 'net', 'B')",
+        )
+        .execute(&pool)
+        .await
+        .expect("servers");
+        sqlx::query(
+            "INSERT INTO plan_users (uuid, registered, name) VALUES ('u1', 1, 'OnA'), ('u2', 1, 'OnB')",
+        )
+        .execute(&pool)
+        .await
+        .expect("users");
+        sqlx::query(
+            "INSERT INTO plan_sessions (user_id, server_id, session_start, session_end)
+             VALUES (1, 1, 1000, 2000), (2, 2, 1000, 2000)",
+        )
+        .execute(&pool)
+        .await
+        .expect("sessions");
+        let req = PlanQueryRequest {
+            played_server_uuids: vec!["srv-a".into()],
+            ..PlanQueryRequest::default()
+        };
+        let result = execute_plan_query(&pool, "net", None, &req)
+            .await
+            .expect("query");
+        assert_eq!(result.matched_count, 1);
+        assert_eq!(result.players[0].name, "OnA");
+    }
+
+    #[tokio::test]
+    async fn readonly_sql_allows_select_and_blocks_writes() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory sqlite");
+        sqlx::query("CREATE TABLE demo (id INTEGER, label TEXT)")
+            .execute(&pool)
+            .await
+            .expect("create");
+        sqlx::query("INSERT INTO demo (id, label) VALUES (2, 'ok')")
+            .execute(&pool)
+            .await
+            .expect("insert");
+        let rows = execute_readonly_sql(&pool, "SELECT id, label FROM demo WHERE id = 2")
+            .await
+            .expect("select");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("id").and_then(|v| v.as_i64()), Some(2));
+        assert!(execute_readonly_sql(&pool, "DELETE FROM demo").await.is_err());
+        assert!(execute_readonly_sql(&pool, "SELECT 1; SELECT 2").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_sql_allowlists_extension_tables() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory sqlite");
+        crate::plan_store::ensure_plan_schema(&pool).await.expect("schema");
+        sqlx::query("INSERT INTO plan_servers (uuid, network_id, name) VALUES ('s', 'n', 'S')")
+            .execute(&pool)
+            .await
+            .expect("server");
+        let affected = execute_plan_sql_write(
+            &pool,
+            "INSERT INTO plan_statistic_totals (server_id, statistic_id, value) VALUES (1, 'demo', 3)",
+        )
+        .await
+        .expect("insert");
+        assert_eq!(affected, 1);
+        assert!(execute_plan_sql_write(&pool, "DELETE FROM plan_users").await.is_err());
     }
 }

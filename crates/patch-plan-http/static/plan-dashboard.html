@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Pumpkin Patch Plan</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --accent: #f97316; }
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 0.75rem 1.25rem; border-bottom: 1px solid #334155; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+    header h1 { font-size: 1.05rem; margin: 0; }
+    nav button { background: transparent; border: 1px solid #475569; color: var(--text); padding: 0.35rem 0.65rem; border-radius: 0.35rem; cursor: pointer; }
+    nav button.active { border-color: var(--accent); color: var(--accent); }
+    main { padding: 1.25rem; max-width: 72rem; margin: 0 auto; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 1rem; }
+    label { color: var(--muted); font-size: 0.85rem; display: flex; flex-direction: column; gap: 0.25rem; }
+    select, input { background: #334155; color: var(--text); border: 1px solid #475569; border-radius: 0.35rem; padding: 0.45rem 0.6rem; min-width: 14rem; }
+    button.primary { background: var(--accent); border: none; color: #0f172a; font-weight: 600; padding: 0.5rem 0.85rem; border-radius: 0.35rem; cursor: pointer; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+    .card { background: var(--card); border-radius: 0.5rem; padding: 1rem; }
+    .card span { color: var(--muted); font-size: 0.8rem; }
+    .card strong { display: block; font-size: 1.35rem; margin-top: 0.25rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { text-align: left; padding: 0.45rem 0.5rem; border-bottom: 1px solid #334155; }
+    th { color: var(--muted); font-weight: 500; }
+    canvas { width: 100%; max-width: 40rem; height: 12rem; background: var(--card); border-radius: 0.5rem; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+    #log { color: var(--muted); font-size: 0.85rem; margin-top: 0.75rem; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Plan</h1>
+    <nav>
+      <button type="button" data-panel="server" class="active">Server</button>
+      <button type="button" data-panel="network">Network</button>
+      <button type="button" data-panel="players">Players</button>
+      <button type="button" data-panel="graph">Graph</button>
+      <button type="button" data-panel="query">Query</button>
+    </nav>
+    <a href="/manage">Manage</a>
+    <a href="/theme-editor">Theme</a>
+    <a href="/export/index.html">Static export</a>
+  </header>
+  <main>
+    <div class="row">
+      <label>Server UUID
+        <input id="server" placeholder="auto-filled from /v1/network/servers" />
+      </label>
+      <button type="button" class="primary" id="refresh">Refresh</button>
+    </div>
+
+    <section id="panel-server" class="panel active">
+      <div class="cards">
+        <div class="card"><span>Online</span><strong id="online">—</strong></div>
+        <div class="card"><span>Total players</span><strong id="total">—</strong></div>
+        <div class="card"><span>7d unique</span><strong id="unique7">—</strong></div>
+        <div class="card"><span>Avg TPS (7d)</span><strong id="tps">—</strong></div>
+      </div>
+    </section>
+
+    <section id="panel-network" class="panel">
+      <div class="cards">
+        <div class="card"><span>Network servers</span><strong id="net-servers">—</strong></div>
+        <div class="card"><span>Network online</span><strong id="net-online">—</strong></div>
+        <div class="card"><span>Avg activity index</span><strong id="net-activity">—</strong></div>
+      </div>
+    </section>
+
+    <section id="panel-players" class="panel">
+      <table>
+        <thead><tr><th>Name</th><th>Activity</th><th>Playtime</th><th>Last seen</th></tr></thead>
+        <tbody id="players-body"></tbody>
+      </table>
+    </section>
+
+    <section id="panel-query" class="panel">
+      <div class="row">
+        <label>Banned filter
+          <select id="q-banned">
+            <option value="">Any</option>
+            <option value="Banned">Banned</option>
+            <option value="Not banned">Not banned</option>
+          </select>
+        </label>
+        <label>Operators
+          <select id="q-operators">
+            <option value="">Any</option>
+            <option value="Operators">Operators</option>
+            <option value="Non-operators">Non-operators</option>
+          </select>
+        </label>
+        <label>Activity group
+          <select id="q-activity" multiple size="4">
+            <option>Very Active</option>
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Very Inactive</option>
+          </select>
+        </label>
+        <button type="button" class="primary" id="run-query">Run cohort query</button>
+      </div>
+      <p id="query-summary"></p>
+      <table>
+        <thead><tr><th>Name</th><th>Activity</th><th>Banned</th><th>Op</th></tr></thead>
+        <tbody id="query-body"></tbody>
+      </table>
+    </section>
+
+    <section id="panel-graph" class="panel">
+      <label>Graph type
+        <select id="graph-type">
+          <option value="playersOnline">playersOnline</option>
+          <option value="tps">tps</option>
+          <option value="uniqueAndNew">uniqueAndNew</option>
+          <option value="geolocation">geolocation</option>
+          <option value="ping">ping</option>
+          <option value="cpuRam">cpuRam</option>
+          <option value="worldLoad">worldLoad</option>
+          <option value="disk">disk</option>
+          <option value="activity">activity</option>
+          <option value="punchCard">punchCard</option>
+          <option value="hourlyUniqueAndNew">hourlyUniqueAndNew</option>
+          <option value="serverCalendar">serverCalendar</option>
+        </select>
+      </label>
+      <canvas id="chart" width="800" height="240"></canvas>
+    </section>
+
+    <p id="log">Loading servers…</p>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let activePanel = new URLSearchParams(location.search).get('panel') || 'server';
+
+    document.querySelectorAll('nav button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activePanel = btn.dataset.panel;
+        document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('active', b === btn));
+        document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + activePanel));
+        refresh();
+      });
+    });
+    document.querySelectorAll('nav button').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.panel === activePanel);
+    });
+    document.querySelectorAll('.panel').forEach((p) => {
+      p.classList.toggle('active', p.id === 'panel-' + activePanel);
+    });
+
+    async function loadServers() {
+      const r = await fetch('/v1/network/servers');
+      const j = await r.json();
+      const list = j.servers || [];
+      if (list.length && !$('server').value) {
+        $('server').value = list[0].uuid || list[0].id || '';
+      }
+      return list;
+    }
+
+    async function refreshServer() {
+      const server = $('server').value.trim();
+      if (!server) return;
+      const r = await fetch('/v1/serverOverview?server=' + encodeURIComponent(server));
+      const d = await r.json();
+      const n = d.numbers || {};
+      const w = d.last_7_days || {};
+      $('online').textContent = n.online_players ?? '—';
+      $('total').textContent = n.total_players ?? '—';
+      $('unique7').textContent = w.unique_players ?? '—';
+      $('tps').textContent = w.avg_tps != null ? Number(w.avg_tps).toFixed(2) : '—';
+    }
+
+    async function refreshNetwork() {
+      const [ov, pb] = await Promise.all([
+        fetch('/v1/network/overview').then((r) => r.json()),
+        fetch('/v1/network/playerbaseOverview').then((r) => r.json()),
+      ]);
+      const servers = ov.servers || [];
+      $('net-servers').textContent = servers.length;
+      $('net-online').textContent = servers.reduce((a, s) => a + (s.online_now || 0), 0);
+      const insights = pb.insights || {};
+      $('net-activity').textContent = insights.avg_activity_index != null
+        ? Number(insights.avg_activity_index).toFixed(2) : '—';
+    }
+
+    async function refreshPlayers() {
+      const server = $('server').value.trim();
+      const q = server ? '?server=' + encodeURIComponent(server) : '';
+      const d = await fetch('/v1/players' + q).then((r) => r.json());
+      const rows = d.data || [];
+      $('players-body').innerHTML = rows.slice(0, 50).map((p) =>
+        `<tr><td>${p.name || ''}</td><td>${p.activity_group || ''}</td><td>${p.active_playtime || ''}</td><td>${p.last_seen || ''}</td></tr>`
+      ).join('');
+    }
+
+    function drawSeries(points) {
+      const canvas = $('chart');
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (!points || !points.length) return;
+      const ys = points.map((p) => p[1]);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys, 1);
+      ctx.strokeStyle = '#f97316';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      points.forEach((p, i) => {
+        const x = (i / Math.max(points.length - 1, 1)) * (canvas.width - 20) + 10;
+        const y = canvas.height - 10 - ((p[1] - minY) / (maxY - minY || 1)) * (canvas.height - 20);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    }
+
+    async function refreshQuery() {
+      const server = $('server').value.trim();
+      const body = { activity_groups: [], join_addresses: [], geolocations: [], banned: [], operators: [] };
+      const banned = $('q-banned').value;
+      if (banned) body.banned = [banned];
+      const ops = $('q-operators').value;
+      if (ops) body.operators = [ops];
+      body.activity_groups = Array.from($('q-activity').selectedOptions).map((o) => o.value);
+      const q = server ? '?server=' + encodeURIComponent(server) : '';
+      const d = await fetch('/v1/query' + q, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+      $('query-summary').textContent = `Matched ${d.matched_count ?? 0} — avg activity ${d.avg_activity_index ?? '—'}`;
+      const rows = d.players || [];
+      $('query-body').innerHTML = rows.slice(0, 100).map((p) =>
+        `<tr><td>${p.name || ''}</td><td>${p.activity_group || ''}</td><td>${p.banned ? 'yes' : ''}</td><td>${p.operator ? 'yes' : ''}</td></tr>`
+      ).join('');
+    }
+
+    async function refreshGraph() {
+      const server = $('server').value.trim();
+      const type = $('graph-type').value;
+      const q = new URLSearchParams({ type });
+      if (server) q.set('server', server);
+      const d = await fetch('/v1/graph?' + q).then((r) => r.json());
+      const series = d.players_online || d.tps || d.unique_and_new || d.avg_ping || d.cpu || d.entities || d.free_disk || [];
+      if (Array.isArray(series) && series.length && Array.isArray(series[0])) {
+        drawSeries(series);
+      } else if (d.punchcard && Array.isArray(d.punchcard)) {
+        drawSeries(d.punchcard.map((p) => [p.x || 0, p.z || p.y || 0]));
+      } else {
+        drawSeries([]);
+      }
+    }
+
+    async function refresh() {
+      $('log').textContent = 'Refreshing…';
+      try {
+        if (activePanel === 'server') await refreshServer();
+        if (activePanel === 'network') await refreshNetwork();
+        if (activePanel === 'players') await refreshPlayers();
+        if (activePanel === 'graph') await refreshGraph();
+        if (activePanel === 'query') await refreshQuery();
+        $('log').textContent = 'Updated ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        $('log').textContent = String(e);
+      }
+    }
+
+    $('refresh').addEventListener('click', refresh);
+    $('run-query').addEventListener('click', refreshQuery);
+    $('graph-type').addEventListener('change', refreshGraph);
+    loadServers().then(refresh).catch((e) => { $('log').textContent = String(e); });
+  </script>
+</body>
+</html>

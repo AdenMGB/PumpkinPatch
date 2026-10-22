@@ -44,6 +44,54 @@ export interface AppSettings {
   java_path: string
   bind_host: string
   pumpkin_channel_default: string
+  plan_http_enabled: boolean
+  plan_http_port: number
+  harvest_duckdb_enabled: boolean
+  gourd_enabled: boolean
+  tendril_voice_udp_port?: number
+  tendril_voice_auto_gourd?: boolean
+}
+
+export interface PlanRegisterStartResponse {
+  code: string
+  expires_ms: number
+}
+
+export interface PlanWebUser {
+  username: string
+  group_name: string
+  linked_to_uuid: string
+}
+
+export interface TopologyNode {
+  id: string
+  kind: string
+  label: string
+  port?: number | null
+}
+
+export interface TopologyEdge {
+  proxy_id: string
+  backend_server_id: string
+  server_alias: string
+  forced_hosts: string[]
+}
+
+export interface NetworkTopology {
+  network_id: string
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+}
+
+export interface RouteWireSpec {
+  proxy_id: string
+  backend_server_id: string
+  server_alias: string
+  forced_hosts: string[]
+  priority_tier: number
+  permission_gate?: string | null
+  /** Gourd lifecycle: active | warming_up | hidden_ready | in_game_locked | draining */
+  pool_state?: string | null
 }
 
 export interface PingResult {
@@ -462,11 +510,68 @@ export interface PlanFilterTypeInfo {
   implemented: boolean
 }
 
+export interface PlanExtensionQueryProvider {
+  plugin: string
+  provider: string
+  value_type: string
+}
+
 export interface PlanFiltersCatalog {
   activity_groups: string[]
   join_addresses: string[]
   geolocations: string[]
   filter_types: PlanFilterTypeInfo[]
+  extension_providers?: PlanExtensionQueryProvider[]
+}
+
+export interface GourdPoolScaleRecommendRequest {
+  current_ccu: number
+  active_backends: number
+  players_per_backend: number
+  hidden_ready: number
+}
+
+export interface GourdPoolPromoteRequest {
+  count: number
+}
+
+export interface GourdScarecrowStats {
+  allowed: number
+  dropped: number
+}
+
+export interface TendrilVoiceStats {
+  packets_in: number
+  packets_out: number
+  bytes_in: number
+  forwards: number
+  spatial_drops: number
+  peers: number
+}
+
+export interface TendrilVoicePeer {
+  player_uuid: string
+  addr: string
+  dimension: string
+  packets_buffered: number
+}
+
+export interface PackManifest {
+  pack_format: number
+  description: string
+  files: Record<string, string>
+}
+
+export interface TendrilVoiceFlushResult {
+  speaker_uuid: string
+  captured_packets: number
+  total_bytes: number
+  output_dir: string
+}
+
+export interface VoiceAudioOutputDevice {
+  id: string
+  name: string
 }
 
 export interface PlanQueryRequest {
@@ -486,6 +591,24 @@ export interface PlanQueryRequest {
   played_after_ms?: number | null
   played_before_ms?: number | null
   played_server_uuids?: string[]
+  banned?: string[]
+  operators?: string[]
+  pluginsBooleanGroups?: Array<{
+    plugin: string
+    provider: string
+    value?: boolean | null
+    group?: string | null
+  }>
+  pluginNumbers?: Array<{
+    plugin: string
+    provider: string
+    min?: number | null
+    max?: number | null
+  }>
+  activityIndexOn?: {
+    date?: number | null
+    groups?: string[]
+  }
 }
 
 export interface PlanQueryCohortView {
@@ -623,6 +746,30 @@ export interface PlanPluginInstallResult {
   server_name: string
   success: boolean
   detail: string
+}
+
+export interface PlanBackupEntry {
+  path: string
+  bytes: number
+  modified_ms: number
+}
+
+export interface PlanDbBackupResponse {
+  path: string
+  bytes: number
+}
+
+export interface PlanSyncReport {
+  servers_synced: number
+  users_upserted: number
+  sessions_inserted: number
+  commands_merged: number
+  activity_points_inserted: number
+  kills_inserted: number
+  world_time_rows_inserted: number
+  performance_samples_inserted: number
+  geolocation_rows_upserted: number
+  ping_rows_inserted: number
 }
 
 export interface NetworkAnalyticsOverview {

@@ -121,8 +121,15 @@ pub struct NetworkAnalyticsOverview {
     pub servers: Vec<ServerAnalyticsSnapshot>,
 }
 
+/// Lobby nodes on a proxied network export Plan `is_proxy` for network CCU graphs.
+pub fn plan_export_is_proxy(network: &NetworkRecord, server: &ServerRecord) -> bool {
+    server.role == "lobby"
+        && (network.hub_type == "velocity" || network.hub_type == "gourd")
+}
+
 pub fn write_patch_plan_config(
     instance_path: &Path,
+    network: &NetworkRecord,
     server: &ServerRecord,
     network_id: Uuid,
     export_secret: &str,
@@ -137,6 +144,9 @@ pub fn write_patch_plan_config(
         network_id: network_id.to_string(),
         export_secret: export_secret.to_string(),
         default_join_address: default_join_address.to_string(),
+        afk_exempt_uuids: Vec::new(),
+        command_usage_exempt_uuids: Vec::new(),
+        is_proxy: plan_export_is_proxy(network, server),
     };
     let path = config_file_path(instance_path);
     let json = serde_json::to_string_pretty(&config)?;
@@ -462,4 +472,49 @@ pub fn generate_export_secret() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod plan_proxy_tests {
+    use super::*;
+    use crate::models::{NetworkRecord, ServerRecord};
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn sample_network(hub_type: &str) -> NetworkRecord {
+        NetworkRecord {
+            id: Uuid::new_v4(),
+            name: "net".into(),
+            hub_type: hub_type.into(),
+            hub_port: 25565,
+            forwarding_secret: "s".into(),
+            lobby_server_id: None,
+            data_path: "/tmp".into(),
+            analytics_export_token: "tok".into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    fn sample_server(role: &str) -> ServerRecord {
+        ServerRecord {
+            id: Uuid::new_v4(),
+            network_id: Uuid::new_v4(),
+            role: role.into(),
+            name: "srv".into(),
+            velocity_name: "srv".into(),
+            game_port: 25566,
+            data_path: "/tmp".into(),
+            pumpkin_channel: "stable".into(),
+            minecraft_version: "1.21".into(),
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn lobby_on_velocity_network_exports_as_proxy() {
+        let net = sample_network("velocity");
+        let lobby = sample_server("lobby");
+        assert!(plan_export_is_proxy(&net, &lobby));
+        assert!(!plan_export_is_proxy(&net, &sample_server("backend")));
+    }
 }

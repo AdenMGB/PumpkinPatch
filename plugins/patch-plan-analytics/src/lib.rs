@@ -92,6 +92,14 @@ impl Plugin for PatchPlanPlugin {
             pending_geolocation: Default::default(),
             online_ping: Default::default(),
             server_enabled_at: state::unix_now(),
+            registration_completions: Vec::new(),
+            web_admin_actions: Vec::new(),
+            desktop_plan_requests: Vec::new(),
+            pending_db_op: None,
+            analytics_enabled: true,
+            kick_counting_enabled: true,
+            vineyard_sink: None,
+            voice_position_sink: None,
         };
         let _ = RUNTIME.set(std::sync::Mutex::new(rt));
 
@@ -100,6 +108,9 @@ impl Plugin for PatchPlanPlugin {
             .map_err(|e| e.to_string())?;
         context
             .register_event_handler(JoinHandler, EventPriority::Normal, false)
+            .map_err(|e| e.to_string())?;
+        context
+            .register_event_handler(MoveHandler, EventPriority::Normal, false)
             .map_err(|e| e.to_string())?;
         context
             .register_event_handler(LeaveHandler, EventPriority::Normal, false)

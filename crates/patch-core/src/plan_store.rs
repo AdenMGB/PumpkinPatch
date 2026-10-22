@@ -4,6 +4,7 @@ use crate::error::{Error, Result};
 use patch_analytics_protocol::{
     AnalyticsPayload, PerformanceSample, PlayerStats, PvpKillRecord, SessionRecord,
 };
+use std::collections::HashMap;
 use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -65,6 +66,24 @@ CREATE TABLE IF NOT EXISTS plan_commandusages (
     UNIQUE (server_id, command)
 );
 
+CREATE TABLE IF NOT EXISTS plan_statistic_totals (
+    server_id INTEGER NOT NULL,
+    statistic_id TEXT NOT NULL,
+    value INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, statistic_id),
+    FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plan_user_statistic_totals (
+    user_id INTEGER NOT NULL,
+    server_id INTEGER NOT NULL,
+    statistic_id TEXT NOT NULL,
+    value INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, server_id, statistic_id),
+    FOREIGN KEY (user_id) REFERENCES plan_users(id) ON DELETE CASCADE,
+    FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS plan_tps (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     server_id INTEGER NOT NULL,
@@ -110,6 +129,17 @@ CREATE TABLE IF NOT EXISTS plan_geolocations (
 
 CREATE INDEX IF NOT EXISTS plan_geolocations_user_index ON plan_geolocations(user_id);
 
+CREATE TABLE IF NOT EXISTS plan_allowlist_bounces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id INTEGER NOT NULL,
+    player_uuid TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    bounce_count INTEGER NOT NULL DEFAULT 1,
+    last_bounce_ms INTEGER NOT NULL,
+    FOREIGN KEY (server_id) REFERENCES plan_servers(id) ON DELETE CASCADE,
+    UNIQUE (server_id, player_uuid)
+);
+
 CREATE TABLE IF NOT EXISTS plan_nicknames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -134,6 +164,12 @@ CREATE TABLE IF NOT EXISTS plan_query_cache (
 );
 
 CREATE INDEX IF NOT EXISTS plan_query_cache_expires ON plan_query_cache(expires_at_ms);
+
+CREATE TABLE IF NOT EXISTS plan_custom_themes (
+    name TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    updated_at_ms BIGINT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS plan_kills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -161,10 +197,63 @@ CREATE TABLE IF NOT EXISTS plan_world_times (
 );
 
 CREATE INDEX IF NOT EXISTS plan_kills_date_index ON plan_kills(date);
+
+CREATE TABLE IF NOT EXISTS plan_web_group (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS plan_web_permission (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    permission TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS plan_web_group_to_permission (
+    group_id INTEGER NOT NULL,
+    permission_id INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES plan_web_group(id) ON DELETE CASCADE,
+    FOREIGN KEY (permission_id) REFERENCES plan_web_permission(id) ON DELETE CASCADE,
+    UNIQUE (group_id, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_security (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    salted_pass_hash TEXT NOT NULL,
+    linked_to_uuid TEXT NOT NULL DEFAULT '',
+    group_id INTEGER NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES plan_web_group(id)
+);
+
+CREATE TABLE IF NOT EXISTS plan_cookies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    web_username TEXT NOT NULL,
+    expires BIGINT NOT NULL,
+    cookie TEXT NOT NULL UNIQUE,
+    FOREIGN KEY (web_username) REFERENCES plan_security(username) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS plan_access_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    time BIGINT NOT NULL,
+    from_ip TEXT,
+    request_method TEXT NOT NULL,
+    request_uri TEXT NOT NULL,
+    response_code INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_pending_registration (
+    code TEXT PRIMARY KEY,
+    username TEXT NOT NULL,
+    salted_pass_hash TEXT NOT NULL,
+    created_ms BIGINT NOT NULL,
+    expires_ms BIGINT NOT NULL
+);
 ";
 
 pub async fn ensure_plan_schema(pool: &SqlitePool) -> Result<()> {
     sqlx::raw_sql(PLAN_SCHEMA).execute(pool).await?;
+    crate::plan_auth::ensure_plan_web_security(pool).await?;
     let _ = sqlx::query("ALTER TABLE plan_user_info ADD COLUMN nick TEXT NOT NULL DEFAULT ''")
         .execute(pool)
         .await;
@@ -173,6 +262,12 @@ pub async fn ensure_plan_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await;
+    let _ = sqlx::query(
+        "ALTER TABLE plan_servers ADD COLUMN is_installed INTEGER NOT NULL DEFAULT 1",
+    )
+    .execute(pool)
+    .await;
+    crate::plan_extension_sql::ensure_extension_sql_schema(pool).await?;
     Ok(())
 }
 
@@ -245,7 +340,11 @@ pub async fn ingest_payload(
                 }
             }
         }
+
+        merge_user_statistics(pool, user_id, server_id, &player.statistic_totals).await?;
     }
+
+    merge_server_statistics(pool, server_id, &payload.server_totals.statistic_totals).await?;
 
     for kill in &payload.recent_pvp_kills {
         if insert_kill(pool, &server_uuid, kill).await? {
@@ -270,7 +369,174 @@ pub async fn ingest_payload(
         }
     }
 
+    for ev in &payload.recent_events {
+        if ev.kind == crate::plan_allowlist::ALLOWLIST_BOUNCE_EVENT {
+            crate::plan_allowlist::record_allowlist_bounce(
+                pool,
+                server_id,
+                &ev.player_uuid,
+                &ev.player_name,
+                ev.t * 1000,
+            )
+            .await?;
+        }
+    }
+
+    let _ = crate::plan_extension_sql::sync_registered_extensions_to_sql(pool, network_id, server_id)
+        .await?;
+
     Ok(report)
+}
+
+async fn merge_server_statistics(
+    pool: &SqlitePool,
+    server_id: i64,
+    stats: &HashMap<String, u64>,
+) -> Result<()> {
+    for (statistic_id, value) in stats {
+        sqlx::query(
+            "INSERT INTO plan_statistic_totals (server_id, statistic_id, value) VALUES (?, ?, ?)
+             ON CONFLICT(server_id, statistic_id) DO UPDATE SET
+               value = MAX(plan_statistic_totals.value, excluded.value)",
+        )
+        .bind(server_id)
+        .bind(statistic_id)
+        .bind(*value as i64)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn merge_user_statistics(
+    pool: &SqlitePool,
+    user_id: i64,
+    server_id: i64,
+    stats: &HashMap<String, u64>,
+) -> Result<()> {
+    for (statistic_id, value) in stats {
+        sqlx::query(
+            "INSERT INTO plan_user_statistic_totals (user_id, server_id, statistic_id, value)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_id, server_id, statistic_id) DO UPDATE SET
+               value = MAX(plan_user_statistic_totals.value, excluded.value)",
+        )
+        .bind(user_id)
+        .bind(server_id)
+        .bind(statistic_id)
+        .bind(*value as i64)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStatisticsServerRow {
+    #[serde(rename = "serverUUID")]
+    pub server_uuid: Option<String>,
+    pub statistics: HashMap<String, u64>,
+}
+
+/// Plan React `StatisticsTable` payload (`GET /v1/statistics`).
+pub async fn statistics_v1(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuid: Option<&str>,
+    aggregate: bool,
+) -> Result<Vec<PlanStatisticsServerRow>> {
+    if let Some(uuid) = server_uuid {
+        let rows = sqlx::query(
+            "SELECT s.uuid, st.statistic_id, st.value
+             FROM plan_statistic_totals st
+             JOIN plan_servers s ON s.id = st.server_id
+             WHERE s.network_id = ? AND s.uuid = ?",
+        )
+        .bind(network_id)
+        .bind(uuid)
+        .fetch_all(pool)
+        .await?;
+        let mut statistics = HashMap::new();
+        for row in rows {
+            statistics.insert(
+                row.get::<String, _>("statistic_id"),
+                row.get::<i64, _>("value") as u64,
+            );
+        }
+        return Ok(vec![PlanStatisticsServerRow {
+            server_uuid: Some(uuid.to_string()),
+            statistics,
+        }]);
+    }
+
+    let rows = sqlx::query(
+        "SELECT s.uuid, st.statistic_id, st.value
+         FROM plan_statistic_totals st
+         JOIN plan_servers s ON s.id = st.server_id
+         WHERE s.network_id = ?",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+
+    if aggregate {
+        let mut statistics = HashMap::new();
+        for row in rows {
+            let id = row.get::<String, _>("statistic_id");
+            let value = row.get::<i64, _>("value") as u64;
+            statistics
+                .entry(id)
+                .and_modify(|v: &mut u64| *v += value)
+                .or_insert(value);
+        }
+        return Ok(vec![PlanStatisticsServerRow {
+            server_uuid: None,
+            statistics,
+        }]);
+    }
+
+    let mut by_server: HashMap<String, HashMap<String, u64>> = HashMap::new();
+    for row in rows {
+        let uuid = row.get::<String, _>("uuid");
+        let id = row.get::<String, _>("statistic_id");
+        let value = row.get::<i64, _>("value") as u64;
+        by_server.entry(uuid).or_default().insert(id, value);
+    }
+    Ok(by_server
+        .into_iter()
+        .map(|(uuid, statistics)| PlanStatisticsServerRow {
+            server_uuid: Some(uuid),
+            statistics,
+        })
+        .collect())
+}
+
+pub async fn player_statistics_map(
+    pool: &SqlitePool,
+    network_id: &str,
+    player_uuid: &str,
+) -> Result<HashMap<String, u64>> {
+    let rows = sqlx::query(
+        "SELECT ust.statistic_id, SUM(ust.value) AS value
+         FROM plan_user_statistic_totals ust
+         JOIN plan_users u ON u.id = ust.user_id
+         JOIN plan_servers s ON s.id = ust.server_id
+         WHERE u.uuid = ? AND s.network_id = ?
+         GROUP BY ust.statistic_id",
+    )
+    .bind(player_uuid)
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| {
+            (
+                row.get::<String, _>("statistic_id"),
+                row.get::<i64, _>("value") as u64,
+            )
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone)]
@@ -350,12 +616,16 @@ async fn upsert_plan_server(
     payload: &AnalyticsPayload,
 ) -> Result<i64> {
     sqlx::query(
-        "INSERT INTO plan_servers (uuid, network_id, name) VALUES (?, ?, ?)
-         ON CONFLICT(uuid) DO UPDATE SET name = excluded.name, network_id = excluded.network_id",
+        "INSERT INTO plan_servers (uuid, network_id, name, is_proxy) VALUES (?, ?, ?, ?)
+         ON CONFLICT(uuid) DO UPDATE SET
+           name = excluded.name,
+           network_id = excluded.network_id,
+           is_proxy = excluded.is_proxy",
     )
     .bind(&payload.server_id)
     .bind(network_id)
     .bind(&payload.server_name)
+    .bind(if payload.is_proxy { 1 } else { 0 })
     .execute(pool)
     .await?;
 
@@ -465,18 +735,22 @@ async fn upsert_user_info(
     let registered_ms = player.first_seen_unix * 1000;
     let last_seen_ms = player.last_seen_unix * 1000;
     sqlx::query(
-        "INSERT INTO plan_user_info (user_id, server_id, join_address, registered, nick)
-         VALUES (?, ?, ?, ?, ?)
+        "INSERT INTO plan_user_info (user_id, server_id, join_address, registered, nick, opped, banned)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, server_id) DO UPDATE SET
            join_address = excluded.join_address,
            registered = MIN(plan_user_info.registered, excluded.registered),
-           nick = CASE WHEN excluded.nick != '' THEN excluded.nick ELSE plan_user_info.nick END",
+           nick = CASE WHEN excluded.nick != '' THEN excluded.nick ELSE plan_user_info.nick END,
+           opped = excluded.opped,
+           banned = excluded.banned",
     )
     .bind(user_id)
     .bind(server_id)
     .bind(&player.join_address)
     .bind(registered_ms)
     .bind(&player.nick)
+    .bind(if player.operator { 1 } else { 0 })
+    .bind(if player.banned { 1 } else { 0 })
     .execute(pool)
     .await?;
     let display_nick = if player.nick.is_empty() {
@@ -1029,6 +1303,31 @@ pub struct PlanPlayerTableRow {
     pub ping_max: u32,
     pub nick: String,
     pub kick_count: u64,
+    #[serde(default)]
+    pub banned: bool,
+    #[serde(default)]
+    pub operator: bool,
+}
+
+pub async fn session_triples_for_user(pool: &SqlitePool, user_uuid: &str) -> Result<Vec<(i64, i64, u64)>> {
+    let session_rows = sqlx::query(
+        "SELECT session_start, session_end, afk_time FROM plan_sessions sess
+         JOIN plan_users u ON u.id = sess.user_id
+         WHERE u.uuid = ?",
+    )
+    .bind(user_uuid)
+    .fetch_all(pool)
+    .await?;
+    Ok(session_rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<i64, _>("session_start"),
+                r.get::<i64, _>("session_end"),
+                r.get::<i64, _>("afk_time") as u64,
+            )
+        })
+        .collect())
 }
 
 pub async fn list_players_table(
@@ -1040,6 +1339,7 @@ pub async fn list_players_table(
     let rows = if let Some(uuid) = server_uuid {
         sqlx::query(
             "SELECT u.name, u.uuid, u.registered, u.times_kicked, ui.join_address, ui.nick,
+                    ui.banned, ui.opped,
                     (SELECT MAX(session_end) FROM plan_sessions WHERE user_id = u.id) AS last_seen,
                     (SELECT COUNT(*) FROM plan_sessions WHERE user_id = u.id AND server_id = s.id) AS sessions
              FROM plan_users u
@@ -1058,6 +1358,7 @@ pub async fn list_players_table(
         sqlx::query(
             "SELECT u.name, u.uuid, u.registered, MAX(u.times_kicked) AS times_kicked,
                     MAX(ui.join_address) AS join_address, MAX(ui.nick) AS nick,
+                    MAX(ui.banned) AS banned, MAX(ui.opped) AS opped,
                     MAX(sess.session_end) AS last_seen,
                     COUNT(sess.id) AS sessions
              FROM plan_users u
@@ -1079,25 +1380,7 @@ pub async fn list_players_table(
     let mut out = Vec::new();
     for row in rows {
         let user_uuid: String = row.get("uuid");
-        let session_rows = sqlx::query(
-            "SELECT session_start, session_end, afk_time FROM plan_sessions sess
-             JOIN plan_users u ON u.id = sess.user_id
-             WHERE u.uuid = ?",
-        )
-        .bind(&user_uuid)
-        .fetch_all(pool)
-        .await?;
-
-        let triples: Vec<(i64, i64, u64)> = session_rows
-            .iter()
-            .map(|r| {
-                (
-                    r.get::<i64, _>("session_start"),
-                    r.get::<i64, _>("session_end"),
-                    r.get::<i64, _>("afk_time") as u64,
-                )
-            })
-            .collect();
+        let triples = session_triples_for_user(pool, &user_uuid).await?;
         let (w1, w2, w3) = active_playtime_in_weeks(&triples, now_ms);
         let ai = ActivityIndex::calculate(w1, w2, w3, DEFAULT_PLAYTIME_THRESHOLD_MS);
         let active_playtime_ms = w1 + w2 + w3;
@@ -1152,6 +1435,8 @@ pub async fn list_players_table(
             ping_max,
             nick: row.try_get("nick").unwrap_or_default(),
             kick_count: row.try_get::<i64, _>("times_kicked").unwrap_or(0) as u64,
+            banned: row.try_get::<i64, _>("banned").unwrap_or(0) != 0,
+            operator: row.try_get::<i64, _>("opped").unwrap_or(0) != 0,
         });
     }
     Ok(out)
@@ -1200,6 +1485,105 @@ pub async fn graph_players_online(
         })
         .collect();
     Ok(PlanGraphPlayersOnline { series })
+}
+
+/// Network CCU graph for proxy dashboards (`type=playersOnlineProxies`).
+/// Uses proxy server TPS samples when `plan_servers.is_proxy = 1`, otherwise
+/// `MAX(players_online)` per minute across backends (avoids double-counting SUM).
+pub async fn graph_players_online_proxies(
+    pool: &SqlitePool,
+    network_id: &str,
+) -> Result<PlanGraphPlayersOnline> {
+    let proxy_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM plan_servers WHERE network_id = ? AND is_proxy = 1",
+    )
+    .bind(network_id)
+    .fetch_one(pool)
+    .await?;
+
+    let rows = if proxy_count > 0 {
+        sqlx::query(
+            "SELECT t.date, MAX(t.players_online) AS players_online FROM plan_tps t
+             JOIN plan_servers s ON s.id = t.server_id
+             WHERE s.network_id = ? AND s.is_proxy = 1
+             GROUP BY t.date
+             ORDER BY t.date ASC",
+        )
+        .bind(network_id)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT t.date, MAX(t.players_online) AS players_online FROM plan_tps t
+             JOIN plan_servers s ON s.id = t.server_id
+             WHERE s.network_id = ?
+             GROUP BY t.date
+             ORDER BY t.date ASC",
+        )
+        .bind(network_id)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let series = rows
+        .iter()
+        .map(|row| {
+            let date: i64 = row.get("date");
+            let online: i64 = row.get("players_online");
+            [date, online]
+        })
+        .collect();
+    Ok(PlanGraphPlayersOnline { series })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanPlayerOnlineName {
+    pub name: String,
+}
+
+/// Players with an active session at `at_ms` (for Plan `/v1/playersOnline` hover chart).
+pub async fn players_online_at(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuid: Option<&str>,
+    at_ms: i64,
+) -> Result<Vec<PlanPlayerOnlineName>> {
+    let rows = if let Some(uuid) = server_uuid {
+        sqlx::query(
+            "SELECT DISTINCT u.name AS name FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND s.uuid = ?
+               AND sess.session_start <= ? AND COALESCE(sess.session_end, ?) >= ?",
+        )
+        .bind(network_id)
+        .bind(uuid)
+        .bind(at_ms)
+        .bind(at_ms)
+        .bind(at_ms)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT DISTINCT u.name AS name FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ?
+               AND sess.session_start <= ? AND COALESCE(sess.session_end, ?) >= ?",
+        )
+        .bind(network_id)
+        .bind(at_ms)
+        .bind(at_ms)
+        .bind(at_ms)
+        .fetch_all(pool)
+        .await?
+    };
+    Ok(rows
+        .iter()
+        .map(|row| PlanPlayerOnlineName {
+            name: row.get("name"),
+        })
+        .collect())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1616,6 +2000,8 @@ pub struct PlanPlayerWorldSlice {
 pub struct PlanPlayerProfileV1 {
     pub info: PlanPlayerTableRow,
     pub stats: PlanPlayerProfileStats,
+    #[serde(default)]
+    pub statistics: HashMap<String, u64>,
     pub nicknames: Vec<PlanPlayerNicknameRow>,
     pub connections: Vec<PlanPlayerConnectionRow>,
     pub punchcard_series: Vec<PlanPlayerPunchcardPoint>,
@@ -1624,6 +2010,23 @@ pub struct PlanPlayerProfileV1 {
     pub sessions: Vec<PlanSessionRow>,
     pub kills_as_killer: Vec<PlanKillRow>,
     pub kills_as_victim: Vec<PlanKillRow>,
+    #[serde(default)]
+    pub extensions: serde_json::Value,
+}
+
+pub async fn player_gdpr_export_json(
+    pool: &SqlitePool,
+    network_id: &str,
+    player_uuid: &str,
+) -> Result<serde_json::Value> {
+    let profile = player_profile_v1(pool, network_id, player_uuid).await?;
+    Ok(serde_json::json!({
+        "schema": "plan-gdpr-export-v1",
+        "exported_at_ms": chrono::Utc::now().timestamp_millis(),
+        "network_id": network_id,
+        "player_uuid": player_uuid,
+        "profile": profile,
+    }))
 }
 
 pub async fn player_profile_v1(
@@ -1648,10 +2051,21 @@ pub async fn player_profile_v1(
     let punchcard_series = player_punchcard_from_sessions(&session_rows);
     let world_pie_series = player_world_pie_from_sessions(&session_rows);
     let server_pie_series = player_server_pie_from_sessions(&session_rows);
+    let statistics = player_statistics_map(pool, network_id, player_uuid).await?;
+    let extensions = crate::plan_extension_sql::extension_values_by_uuid(
+        pool,
+        network_id,
+        &[player_uuid.to_string()],
+    )
+    .await?
+    .get(player_uuid)
+    .cloned()
+    .unwrap_or_else(|| serde_json::json!({}));
 
     Ok(PlanPlayerProfileV1 {
         info,
         stats,
+        statistics,
         nicknames,
         connections,
         punchcard_series,
@@ -1660,6 +2074,7 @@ pub async fn player_profile_v1(
         sessions: session_rows,
         kills_as_killer,
         kills_as_victim,
+        extensions,
     })
 }
 
@@ -2005,6 +2420,37 @@ pub async fn list_join_addresses(
         .collect())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanNetworkServerRow {
+    pub id: i64,
+    pub uuid: String,
+    pub name: String,
+    pub is_installed: bool,
+}
+
+pub async fn plan_network_servers_v1(
+    pool: &SqlitePool,
+    network_id: &str,
+) -> Result<Vec<PlanNetworkServerRow>> {
+    let rows = sqlx::query(
+        "SELECT id, uuid, name, is_installed FROM plan_servers
+         WHERE network_id = ? AND is_installed = 1
+         ORDER BY name ASC",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|row| PlanNetworkServerRow {
+            id: row.get("id"),
+            uuid: row.get("uuid"),
+            name: row.get("name"),
+            is_installed: row.get::<i64, _>("is_installed") != 0,
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod ingest_tests {
     use super::*;
@@ -2055,6 +2501,10 @@ mod ingest_tests {
                 mspt_avg: 52.0,
                 players_online: 2,
             }],
+            registration_completions: vec![],
+            web_admin_actions: vec![],
+            desktop_plan_requests: vec![],
+            is_proxy: false,
         }
     }
 
@@ -2137,6 +2587,10 @@ mod ingest_tests {
             command_usages: Default::default(),
             recent_pvp_kills: vec![],
             performance_samples: vec![],
+            registration_completions: vec![],
+            web_admin_actions: vec![],
+            desktop_plan_requests: vec![],
+            is_proxy: false,
         };
         let report = ingest_payload(&pool, "net-geo", &payload)
             .await
@@ -2150,6 +2604,124 @@ mod ingest_tests {
         assert_eq!(ping_table.len(), 1);
         assert_eq!(ping_table[0].country, "Local Machine");
         assert_eq!(ping_table[0].avg_ping, 42);
+    }
+
+    #[tokio::test]
+    async fn statistics_survive_ingest_and_statistics_v1() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory db");
+        ensure_plan_schema(&pool).await.expect("schema");
+        let mut payload = sample_payload();
+        payload
+            .server_totals
+            .statistic_totals
+            .insert("minecraft:custom:jump".into(), 42);
+        payload.players[0]
+            .statistic_totals
+            .insert("minecraft:custom:walk_one_cm".into(), 1000);
+        ingest_payload(&pool, "net-1", &payload)
+            .await
+            .expect("ingest");
+        let rows = statistics_v1(&pool, "net-1", Some("srv-uuid-1"), false)
+            .await
+            .expect("stats");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].statistics.get("minecraft:custom:jump"),
+            Some(&42)
+        );
+        let player_stats = player_statistics_map(&pool, "net-1", "player-uuid-1")
+            .await
+            .expect("player stats");
+        assert_eq!(
+            player_stats.get("minecraft:custom:walk_one_cm"),
+            Some(&1000)
+        );
+    }
+
+    #[tokio::test]
+    async fn ingest_persists_is_proxy_flag() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory db");
+        ensure_plan_schema(&pool).await.expect("schema");
+        let mut payload = sample_payload();
+        payload.is_proxy = true;
+        ingest_payload(&pool, "net-1", &payload)
+            .await
+            .expect("ingest");
+        let flag: i64 = sqlx::query_scalar(
+            "SELECT is_proxy FROM plan_servers WHERE uuid = 'srv-uuid-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("is_proxy");
+        assert_eq!(flag, 1);
+    }
+
+    #[tokio::test]
+    async fn players_online_proxies_uses_max_across_servers() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory db");
+        ensure_plan_schema(&pool).await.expect("schema");
+        ingest_payload(&pool, "net-1", &sample_payload())
+            .await
+            .expect("ingest");
+        sqlx::query(
+            "INSERT INTO plan_servers (uuid, network_id, name) VALUES ('srv-b', 'net-1', 'Backend B')",
+        )
+        .execute(&pool)
+        .await
+        .expect("second server");
+        let srv_a: i64 = sqlx::query_scalar("SELECT id FROM plan_servers WHERE uuid = 'srv-uuid-1'")
+            .fetch_one(&pool)
+            .await
+            .expect("srv a");
+        let srv_b: i64 = sqlx::query_scalar("SELECT id FROM plan_servers WHERE uuid = 'srv-b'")
+            .fetch_one(&pool)
+            .await
+            .expect("srv b");
+        let date_ms = ((1_700_000_000_i64 / 60) * 60) * 1000;
+        sqlx::query("DELETE FROM plan_tps")
+            .execute(&pool)
+            .await
+            .expect("clear tps");
+        sqlx::query(
+            "INSERT INTO plan_tps (server_id, date, ticks_per_second, players_online)
+             VALUES (?, ?, 20.0, 3), (?, ?, 20.0, 7)",
+        )
+        .bind(srv_a)
+        .bind(date_ms)
+        .bind(srv_b)
+        .bind(date_ms)
+        .execute(&pool)
+        .await
+        .expect("tps rows");
+        let summed = graph_players_online(&pool, "net-1", None)
+            .await
+            .expect("sum graph");
+        let proxies = graph_players_online_proxies(&pool, "net-1")
+            .await
+            .expect("proxy graph");
+        let sum_val = summed
+            .series
+            .iter()
+            .find(|p| p[0] == date_ms)
+            .map(|p| p[1])
+            .unwrap_or(0);
+        let max_val = proxies
+            .series
+            .iter()
+            .find(|p| p[0] == date_ms)
+            .map(|p| p[1])
+            .unwrap_or(0);
+        assert_eq!(sum_val, 10);
+        assert_eq!(max_val, 7);
     }
 
     #[test]

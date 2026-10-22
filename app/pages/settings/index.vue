@@ -14,6 +14,10 @@ const form = ref<AppSettings>({
   java_path: 'java',
   bind_host: '127.0.0.1',
   pumpkin_channel_default: 'nightly',
+  plan_http_enabled: true,
+  plan_http_port: 8804,
+  harvest_duckdb_enabled: true,
+  gourd_enabled: false,
 })
 
 watch(
@@ -72,6 +76,23 @@ const detectMutation = useMutation({
           label="Default Pumpkin channel"
           hint="GitHub release tag, usually nightly."
         />
+        <label class="settings-check">
+          <input v-model="form.plan_http_enabled" type="checkbox" />
+          Enable Plan-compatible HTTP API (`/v1` on bind host)
+        </label>
+        <PpInput
+          v-model.number="form.plan_http_port"
+          label="Plan HTTP port"
+          hint="Default 8804 (indepth.md embedded webserver)."
+        />
+        <label class="settings-check">
+          <input v-model="form.harvest_duckdb_enabled" type="checkbox" />
+          HarvestMetrics JSON mirror sync
+        </label>
+        <label class="settings-check">
+          <input v-model="form.gourd_enabled" type="checkbox" />
+          Prefer native Gourd proxy (experimental)
+        </label>
         <PpButton type="submit" :loading="saveMutation.isPending.value">Save settings</PpButton>
       </form>
     </PpCard>
@@ -84,6 +105,13 @@ const detectMutation = useMutation({
 }
 .form-card {
   margin-top: 0.5rem;
+}
+.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--color-text);
 }
 .form {
   display: flex;

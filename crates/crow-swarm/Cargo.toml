@@ -1,0 +1,9 @@
+[package]
+name = "crow-swarm"
+version = "0.1.0"
+edition.workspace = true
+description = "Synthetic bot load tester scaffold (plangem.md §6.6 Locust Craft)"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+serde = { version = "1", features = ["derive"] }

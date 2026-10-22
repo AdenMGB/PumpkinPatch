@@ -1,0 +1,1 @@
+import{h as e,m as t}from"./authenticationHook-CSG-4-GM.js";t();var n=e(),r=({id:e,className:t,disabled:r,onClick:i,children:a,style:o,title:s})=>(0,n.jsx)(`button`,{className:`btn btn-action `+t,id:e,title:s,onClick:i,disabled:r,style:o,children:a});export{r as t};

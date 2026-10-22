@@ -838,11 +838,17 @@ async fn session_playtime_avgs(
         .fetch_one(pool)
         .await?
     };
-    // SQLite AVG() returns REAL; do not decode as INTEGER.
     Ok((
-        row.get::<f64, _>("play").round() as u64,
-        row.get::<f64, _>("afk").round() as u64,
+        sqlite_avg_column(&row, "play").round() as u64,
+        sqlite_avg_column(&row, "afk").round() as u64,
     ))
+}
+
+/// SQLite may return `COALESCE(AVG(...), 0)` as INTEGER when the aggregate is empty.
+fn sqlite_avg_column(row: &sqlx::sqlite::SqliteRow, column: &str) -> f64 {
+    row.try_get::<f64, _>(column)
+        .or_else(|_| row.try_get::<i64, _>(column).map(|v| v as f64))
+        .unwrap_or(0.0)
 }
 
 fn count_regular(players: &[PlanPlayerTableRow]) -> u64 {

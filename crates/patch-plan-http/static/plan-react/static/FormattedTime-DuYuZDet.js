@@ -1,0 +1,1 @@
+import{i as e}from"./index-FB9uRZlt.js";import{t}from"./useTimeAmountFormatter-CafD9fJv.js";var n=({timeMs:n})=>{let{formatTime:r}=t();return e(n)?r(n):n};export{n as t};

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Velocity connects to Pumpkin backends on loopback; public `bind_host` is only for the proxy listen socket.
-const VELOCITY_BACKEND_HOST: &str = "127.0.0.1";
+pub const VELOCITY_BACKEND_HOST: &str = "127.0.0.1";
 
 #[derive(Clone)]
 pub struct NetworkOrchestrator {

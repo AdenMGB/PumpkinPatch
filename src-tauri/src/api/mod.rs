@@ -6,9 +6,17 @@ pub mod analytics;
 pub mod catalog;
 pub mod console;
 pub mod network;
+pub mod orchestration;
+pub mod plugins_resolve;
+pub mod plan_auth;
+pub mod plan_db;
+pub mod plan_http;
+pub mod platform;
 pub mod ping;
 pub mod server;
 pub mod settings;
+pub mod telemetry;
+pub mod voice;
 
 pub type Result<T> = std::result::Result<T, PatchApiError>;
 

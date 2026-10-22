@@ -49,11 +49,16 @@ CREATE TABLE IF NOT EXISTS deployed_plugins (
 #[derive(Clone)]
 pub struct Database {
     pool: SqlitePool,
+    path: std::path::PathBuf,
 }
 
 impl Database {
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    pub fn file_path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -81,7 +86,10 @@ impl Database {
         )
         .execute(&pool)
         .await;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            path: db_path.to_path_buf(),
+        })
     }
 
     pub async fn insert_network(&self, network: &NetworkRecord) -> Result<()> {
@@ -213,6 +221,19 @@ impl Database {
                 "java_path" => settings.java_path = value,
                 "bind_host" => settings.bind_host = value,
                 "pumpkin_channel_default" => settings.pumpkin_channel_default = value,
+                "plan_http_enabled" => settings.plan_http_enabled = value == "true",
+                "plan_http_port" => {
+                    settings.plan_http_port = value.parse().unwrap_or(8804);
+                }
+                "harvest_duckdb_enabled" => settings.harvest_duckdb_enabled = value == "true",
+                "gourd_enabled" => settings.gourd_enabled = value == "true",
+                "plan_geolite_eula" => settings.plan_geolite_eula = value == "true",
+                "tendril_voice_udp_port" => {
+                    settings.tendril_voice_udp_port = value.parse().unwrap_or(24454);
+                }
+                "tendril_voice_auto_gourd" => {
+                    settings.tendril_voice_auto_gourd = value == "true";
+                }
                 _ => {}
             }
         }
@@ -255,14 +276,57 @@ impl Database {
     }
 
     pub async fn save_settings(&self, settings: &AppSettings) -> Result<()> {
-        for (key, value) in [
-            ("java_path", settings.java_path.as_str()),
-            ("bind_host", settings.bind_host.as_str()),
+        let pairs = [
+            ("java_path", settings.java_path.clone()),
+            ("bind_host", settings.bind_host.clone()),
+            ("pumpkin_channel_default", settings.pumpkin_channel_default.clone()),
             (
-                "pumpkin_channel_default",
-                settings.pumpkin_channel_default.as_str(),
+                "plan_http_enabled",
+                if settings.plan_http_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
             ),
-        ] {
+            ("plan_http_port", settings.plan_http_port.to_string()),
+            (
+                "harvest_duckdb_enabled",
+                if settings.harvest_duckdb_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+            (
+                "gourd_enabled",
+                if settings.gourd_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+            (
+                "plan_geolite_eula",
+                if settings.plan_geolite_eula {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+            (
+                "tendril_voice_udp_port",
+                settings.tendril_voice_udp_port.to_string(),
+            ),
+            (
+                "tendril_voice_auto_gourd",
+                if settings.tendril_voice_auto_gourd {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+        ];
+        for (key, value) in pairs {
             sqlx::query("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
                 .bind(key)
                 .bind(value)

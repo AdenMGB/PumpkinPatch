@@ -1,0 +1,1 @@
+var e=(...e)=>e.filter(e=>e!==void 0).map(e=>typeof e==`object`?[Object.entries(e).filter(e=>e[1]).map(e=>e[0])].join(` `):e).join(` `);export{e as t};

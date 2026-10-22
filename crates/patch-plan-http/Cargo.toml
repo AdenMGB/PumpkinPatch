@@ -1,0 +1,25 @@
+[package]
+name = "patch-plan-http"
+version = "0.1.0"
+edition.workspace = true
+description = "Plan-compatible Axum /v1 REST server (indepth.md §5.3)"
+
+[dependencies]
+axum = { version = "0.8", features = ["json"] }
+patch-analytics-protocol = { path = "../../plugins/patch-analytics-protocol" }
+patch-core = { path = "../patch-core" }
+patch-plan-core = { path = "../patch-plan-core" }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+uuid = { version = "1", features = ["serde"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+openssl = { version = "0.10", features = ["vendored"] }
+jks = { version = "0.3.3", default-features = false, features = ["rand"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
+tower = { version = "0.5", features = ["util"] }

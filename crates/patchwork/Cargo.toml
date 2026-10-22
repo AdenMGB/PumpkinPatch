@@ -1,0 +1,10 @@
+[package]
+name = "patchwork"
+version = "0.1.0"
+edition.workspace = true
+description = "Resource pack merge & CDN publish scaffold (plangem.md §5.2)"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

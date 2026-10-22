@@ -4,10 +4,14 @@ Desktop hub for **PumpkinMC server networks**: Velocity proxy + Pumpkin lobby/ba
 
 ## Architecture
 
-- `crates/patch-core` — SQLite, downloads, `velocity.toml` / proxy config generation, process supervisor, ping
-- `src-tauri` — Tauri commands (`network_*`, `settings_*`, …)
-- `app/` — Nuxt 4 UI (`/library`, `/networks/new`, …)
-- `plugins/` — `patch-hub-lobby`, `patch-plan-analytics`, and shared protocol crates (WASM via manifest)
+- `crates/patch-core` — SQLite, Plan/HarvestMetrics ingest, `/v1` query engine, Vineyard bus host sampler
+- `crates/patch-plan-http` — Plan-compatible Axum REST (`8804`, indepth.md §5.3)
+- `crates/vineyard-*`, `gourd-proxy`, `stem-agent`, `harvest-metrics` — plangem.md phase-1 platform crates
+- `src-tauri` — Tauri commands (networks, Plan analytics, topology hot-wire, binary telemetry IPC)
+- `app/` — Nuxt 4 UI (`/library`, `/networks/:id/analytics`, `/topology`, …)
+- `plugins/` — `patch-hub-lobby`, `patch-plan-analytics`, shared protocol crates (WASM via manifest)
+
+Specs: `indepth.md` (Plan port), `plangem.md` (PumpkinPatch platform roadmap).
 
 ## Development
 

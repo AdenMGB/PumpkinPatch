@@ -12,9 +12,19 @@ pub async fn plan_graph(
     server_uuid: Option<&str>,
     graph_type: &str,
 ) -> Result<Value> {
+    let graph_type = match graph_type {
+        "joinAddressByDay" => "joinAddressesByDay",
+        "optimizedPerformance" => "tps",
+        "aggregatedPing" => "ping",
+        other => other,
+    };
     match graph_type {
         "playersOnline" => {
             let g = crate::plan_store::graph_players_online(pool, network_id, server_uuid).await?;
+            Ok(json!({ "players_online": g.series }))
+        }
+        "playersOnlineProxies" => {
+            let g = crate::plan_store::graph_players_online_proxies(pool, network_id).await?;
             Ok(json!({ "players_online": g.series }))
         }
         "worldPie" => Ok(json!(world_pie(pool, network_id, server_uuid).await?)),
@@ -44,8 +54,15 @@ pub struct WorldPieSlice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GmPieSlice {
+    pub name: String,
+    pub y: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldPieResponse {
     pub world_series: Vec<WorldPieSlice>,
+    pub gm_series: Vec<GmPieSlice>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,8 +73,15 @@ pub struct GeolocationSlice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeolocationBarSlice {
+    pub name: String,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeolocationGraphResponse {
     pub geolocation_series: Vec<GeolocationSlice>,
+    pub geolocation_bar_series: Vec<GeolocationBarSlice>,
 }
 
 async fn geolocation_series(
@@ -94,18 +118,28 @@ async fn geolocation_series(
         .await?
     };
 
+    let geolocation_series = rows
+        .iter()
+        .map(|r| {
+            let name: String = r.get("name");
+            GeolocationSlice {
+                code: geolocation_code(&name),
+                name,
+                value: r.get::<i64, _>("value") as u64,
+            }
+        })
+        .collect::<Vec<_>>();
+    let geolocation_bar_series = geolocation_series
+        .iter()
+        .take(16)
+        .map(|s| GeolocationBarSlice {
+            name: s.name.clone(),
+            value: s.value,
+        })
+        .collect();
     Ok(GeolocationGraphResponse {
-        geolocation_series: rows
-            .iter()
-            .map(|r| {
-                let name: String = r.get("name");
-                GeolocationSlice {
-                    code: geolocation_code(&name),
-                    name,
-                    value: r.get::<i64, _>("value") as u64,
-                }
-            })
-            .collect(),
+        geolocation_series,
+        geolocation_bar_series,
     })
 }
 
@@ -158,6 +192,51 @@ async fn world_pie(
         .await?
     };
 
+    let gm_rows = if let Some(uuid) = server_uuid {
+        sqlx::query(
+            "SELECT SUM(wt.survival_time) AS survival,
+                    SUM(wt.creative_time) AS creative,
+                    SUM(wt.adventure_time) AS adventure,
+                    SUM(wt.spectator_time) AS spectator
+             FROM plan_world_times wt
+             JOIN plan_sessions sess ON sess.id = wt.session_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND s.uuid = ?",
+        )
+        .bind(network_id)
+        .bind(uuid)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT SUM(wt.survival_time) AS survival,
+                    SUM(wt.creative_time) AS creative,
+                    SUM(wt.adventure_time) AS adventure,
+                    SUM(wt.spectator_time) AS spectator
+             FROM plan_world_times wt
+             JOIN plan_sessions sess ON sess.id = wt.session_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ?",
+        )
+        .bind(network_id)
+        .fetch_one(pool)
+        .await?
+    };
+
+    let gm_series = [
+        ("Survival", "survival"),
+        ("Creative", "creative"),
+        ("Adventure", "adventure"),
+        ("Spectator", "spectator"),
+    ]
+    .iter()
+    .map(|(label, col)| GmPieSlice {
+        name: (*label).into(),
+        y: gm_rows.get::<i64, _>(*col).max(0) as u64,
+    })
+    .filter(|s| s.y > 0)
+    .collect();
+
     Ok(WorldPieResponse {
         world_series: rows
             .iter()
@@ -166,6 +245,7 @@ async fn world_pie(
                 y: r.get::<i64, _>("total") as u64,
             })
             .collect(),
+        gm_series,
     })
 }
 
@@ -279,14 +359,82 @@ async fn activity_pie(
 ) -> Result<Value> {
     let players = crate::plan_store::list_players_table(pool, network_id, server_uuid, 500).await?;
     let mut groups: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    for p in players {
+    for p in &players {
         *groups.entry(p.activity_group.clone()).or_insert(0) += 1;
     }
-    let series = groups
-        .into_iter()
+    let pie_series = groups
+        .iter()
         .map(|(name, count)| json!({ "name": name, "y": count }))
         .collect::<Vec<_>>();
-    Ok(json!({ "activity_pie_series": series }))
+
+    const DAY_MS: i64 = 86_400_000;
+    let since = Utc::now().timestamp_millis() - 30 * DAY_MS;
+    let rows = if let Some(uuid) = server_uuid {
+        sqlx::query(
+            "SELECT (sess.session_start / ?) * ? AS day, u.uuid
+             FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND s.uuid = ? AND sess.session_start >= ?",
+        )
+        .bind(DAY_MS)
+        .bind(DAY_MS)
+        .bind(network_id)
+        .bind(uuid)
+        .bind(since)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT (sess.session_start / ?) * ? AS day, u.uuid
+             FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND sess.session_start >= ?",
+        )
+        .bind(DAY_MS)
+        .bind(DAY_MS)
+        .bind(network_id)
+        .bind(since)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let group_by_uuid: std::collections::HashMap<String, String> = players
+        .iter()
+        .map(|p| (p.uuid.clone(), p.activity_group.clone()))
+        .collect();
+    let mut daily: std::collections::HashMap<String, std::collections::HashMap<i64, u32>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let day: i64 = row.get("day");
+        let uuid: String = row.get("uuid");
+        let group = group_by_uuid
+            .get(&uuid)
+            .cloned()
+            .unwrap_or_else(|| "Inactive".into());
+        daily
+            .entry(group)
+            .or_default()
+            .entry(day)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+    }
+    let activity_series: serde_json::Map<String, Value> = daily
+        .into_iter()
+        .map(|(group, days)| {
+            let points = days
+                .into_iter()
+                .map(|(day, count)| json!([day, count]))
+                .collect::<Vec<_>>();
+            (group, json!(points))
+        })
+        .collect();
+
+    Ok(json!({
+        "activity_pie_series": pie_series,
+        "activity_series": activity_series,
+    }))
 }
 
 async fn cpu_ram_series(

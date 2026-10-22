@@ -11,7 +11,7 @@ pub const PLUGIN_DATA_DIR_NAME: &str = "PatchPlan";
 pub const CONFIG_FILENAME: &str = "patch-config.json";
 pub const EXPORT_FILENAME: &str = "export.json";
 pub const STATE_FILENAME: &str = "state.json";
-pub const EXPORT_SCHEMA_VERSION: u32 = 5;
+pub const EXPORT_SCHEMA_VERSION: u32 = 7;
 pub const MAX_PERFORMANCE_SAMPLES: usize = 576;
 pub const MAX_RECENT_PVP_KILLS: usize = 150;
 pub const MAX_COMPLETED_SESSIONS_PER_PLAYER: usize = 96;
@@ -24,6 +24,9 @@ pub const MAX_EXPORT_PLAYERS: usize = 512;
 pub const MAX_PING_WINDOWS_PER_PLAYER: usize = 96;
 pub const MAX_ACTIVITY_SAMPLES: usize = 576;
 
+/// `recent_events.kind` for Minecraft game allowlist join rejections.
+pub const ALLOWLIST_BOUNCE_EVENT: &str = "allowlist_bounce";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchPlanConfig {
     pub schema_version: u32,
@@ -34,6 +37,15 @@ pub struct PatchPlanConfig {
     /// Virtual host players use to join the network (Plan join address).
     #[serde(default)]
     pub default_join_address: String,
+    /// Player UUIDs exempt from AFK tracking (Plan `plan.ignore.afk` until permission bridge exists).
+    #[serde(default)]
+    pub afk_exempt_uuids: Vec<String>,
+    /// Player UUIDs exempt from command usage logging (`plan.ignore.commanduse`).
+    #[serde(default)]
+    pub command_usage_exempt_uuids: Vec<String>,
+    /// BungeeCord / Velocity / Gourd proxy node — drives Plan `is_proxy` and network CCU graphs.
+    #[serde(default)]
+    pub is_proxy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -83,6 +95,10 @@ pub struct PlayerStats {
     pub ping_windows: Vec<PingWindowRecord>,
     #[serde(default)]
     pub completed_sessions: Vec<SessionRecord>,
+    #[serde(default)]
+    pub banned: bool,
+    #[serde(default)]
+    pub operator: bool,
 }
 
 /// One-minute aggregated ping window (§2.4).
@@ -176,6 +192,49 @@ pub struct AnalyticsEvent {
     pub detail: String,
 }
 
+/// In-game `/plan register <code>` completions synced via signed export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationCompletion {
+    pub code: String,
+    pub player_uuid: String,
+    pub player_name: String,
+    #[serde(default)]
+    pub grant_admin: bool,
+}
+
+/// In-game web RBAC admin actions (`/plan setgroup`, `logout`, `unregister`) synced via export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum WebAdminAction {
+    SetGroup {
+        username: String,
+        group_name: String,
+    },
+    LogoutUser {
+        username: String,
+    },
+    DeleteUser {
+        username: String,
+    },
+    DeleteUserByUuid {
+        player_uuid: String,
+    },
+}
+
+/// Console `/plan db *` requests executed on the Pumpkin Patch desktop Plan SQLite store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum DesktopPlanRequest {
+    DbOptimize,
+    DbBackup { label: String },
+    DbRemovePlayer { target: String },
+    DbClearNetwork,
+    DbMarkServerUninstalled { server: String },
+    DbRestore { backup_path: String },
+    /// Queue static Plan JSON bundle under the network export directory (desktop sync).
+    ExportStaticBundle,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyticsPayload {
     pub schema_version: u32,
@@ -202,6 +261,15 @@ pub struct AnalyticsPayload {
     pub recent_pvp_kills: Vec<PvpKillRecord>,
     #[serde(default)]
     pub performance_samples: Vec<PerformanceSample>,
+    #[serde(default)]
+    pub registration_completions: Vec<RegistrationCompletion>,
+    #[serde(default)]
+    pub web_admin_actions: Vec<WebAdminAction>,
+    #[serde(default)]
+    pub desktop_plan_requests: Vec<DesktopPlanRequest>,
+    /// Copied from [`PatchPlanConfig::is_proxy`] on export.
+    #[serde(default)]
+    pub is_proxy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,6 +373,11 @@ mod tests {
             activity_samples: vec![],
             command_usages: HashMap::new(),
             recent_pvp_kills: vec![],
+            performance_samples: vec![],
+            registration_completions: vec![],
+            web_admin_actions: vec![],
+            desktop_plan_requests: vec![],
+            is_proxy: false,
         };
         let sig = sign_payload(&payload, "test-secret").unwrap();
         let export = SignedExport {

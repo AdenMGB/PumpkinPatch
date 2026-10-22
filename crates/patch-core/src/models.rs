@@ -134,6 +134,34 @@ pub struct AppSettings {
     pub java_path: String,
     pub bind_host: String,
     pub pumpkin_channel_default: String,
+    #[serde(default = "default_true")]
+    pub plan_http_enabled: bool,
+    #[serde(default = "default_plan_http_port")]
+    pub plan_http_port: u16,
+    #[serde(default = "default_true")]
+    pub harvest_duckdb_enabled: bool,
+    #[serde(default)]
+    pub gourd_enabled: bool,
+    /// UDP port for TendrilVoice when auto-started with Gourd (plangem.md §5.1).
+    #[serde(default = "default_tendril_voice_udp_port")]
+    pub tendril_voice_udp_port: u16,
+    #[serde(default = "default_true")]
+    pub tendril_voice_auto_gourd: bool,
+    /// When true, download/cache GeoLite2-Country for Plan geolocation (indepth §2.4).
+    #[serde(default = "default_true")]
+    pub plan_geolite_eula: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_plan_http_port() -> u16 {
+    8804
+}
+
+fn default_tendril_voice_udp_port() -> u16 {
+    24454
 }
 
 impl Default for AppSettings {
@@ -142,6 +170,13 @@ impl Default for AppSettings {
             java_path: "java".into(),
             bind_host: "127.0.0.1".into(),
             pumpkin_channel_default: "nightly".into(),
+            plan_http_enabled: true,
+            plan_http_port: 8804,
+            harvest_duckdb_enabled: true,
+            gourd_enabled: false,
+            tendril_voice_udp_port: default_tendril_voice_udp_port(),
+            tendril_voice_auto_gourd: true,
+            plan_geolite_eula: true,
         }
     }
 }

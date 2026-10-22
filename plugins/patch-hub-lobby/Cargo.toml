@@ -10,6 +10,6 @@ crate-type = ["cdylib"]
 
 [dependencies]
 patch-network-protocol = { path = "../patch-network-protocol" }
-pumpkin-plugin-api = { path = "../../../pumpkin/crates/pumpkin-plugin-api" }
+pumpkin-plugin-api = { path = "../../pumpkin/crates/pumpkin-plugin-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
