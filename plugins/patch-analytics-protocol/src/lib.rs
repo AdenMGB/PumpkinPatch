@@ -34,6 +34,12 @@ pub struct PatchPlanConfig {
     /// Virtual host players use to join the network (Plan join address).
     #[serde(default)]
     pub default_join_address: String,
+    /// Player UUIDs exempt from AFK tracking (Plan `plan.ignore.afk` until permission bridge exists).
+    #[serde(default)]
+    pub afk_exempt_uuids: Vec<String>,
+    /// Player UUIDs exempt from command usage logging (`plan.ignore.commanduse`).
+    #[serde(default)]
+    pub command_usage_exempt_uuids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -214,6 +220,7 @@ pub enum DesktopPlanRequest {
     DbRemovePlayer { target: String },
     DbClearNetwork,
     DbMarkServerUninstalled { server: String },
+    DbRestore { backup_path: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

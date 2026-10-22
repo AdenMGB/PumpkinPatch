@@ -12,11 +12,12 @@ use axum::{
 };
 use patch_core::{
     execute_plan_query, extension_data_v1, list_join_addresses, list_kills, list_web_users,
-    logout_web_user, network_overview_v1,
-    plan_log_access, plan_web_login, start_web_registration,
+    logout_web_user, network_overview_v1, player_gdpr_export_json,
+    plan_log_access, plan_web_login, start_web_registration, PlanJsonCache,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
-    retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, PlanQueryRequest,
+    retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, with_plan_cache,
+    PlanQueryRequest,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -31,6 +32,7 @@ pub struct PlanHttpState {
     pub pool: sqlx::SqlitePool,
     pub online_by_server: Arc<HashMap<String, u32>>,
     pub static_export_dir: Option<PathBuf>,
+    pub json_cache: Arc<PlanJsonCache>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,7 +84,9 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/network/overview", get(network_overview))
         .route("/v1/network/servers", get(network_servers))
         .route("/v1/player", get(player_profile))
+        .route("/v1/player/json", get(player_gdpr_json))
         .route("/v1/graph", get(graph))
+        .route("/", get(plan_dashboard_redirect))
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
@@ -183,6 +187,27 @@ fn live_online(st: &PlanHttpState, server: Option<&str>) -> u32 {
         .unwrap_or(0)
 }
 
+async fn plan_dashboard_redirect() -> impl IntoResponse {
+    (
+        StatusCode::TEMPORARY_REDIRECT,
+        [(axum::http::header::LOCATION, "/export/index.html")],
+    )
+}
+
+async fn player_gdpr_json(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<ServerQuery>,
+) -> impl IntoResponse {
+    let player = q.player.as_deref().unwrap_or("");
+    if player.is_empty() {
+        return (StatusCode::BAD_REQUEST, "player query parameter required").into_response();
+    }
+    match player_gdpr_export_json(&st.pool, &st.network_id, player).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
 async fn server_overview(
     State(st): State<PlanHttpState>,
     Query(q): Query<ServerQuery>,
@@ -192,17 +217,28 @@ async fn server_overview(
         .as_deref()
         .ok_or_else(|| "server query parameter required".to_string());
     match server {
-        Ok(uuid) => match server_overview_v1(
-            &st.pool,
-            &st.network_id,
-            uuid,
-            live_online(&st, Some(uuid)),
-        )
-        .await
-        {
-            Ok(v) => Json(v).into_response(),
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        },
+        Ok(uuid) => {
+            let key = PlanJsonCache::cache_key(
+                "serverOverview",
+                &st.network_id,
+                Some(uuid),
+                "",
+            );
+            match with_plan_cache(&st.json_cache, key, false, || async {
+                server_overview_v1(
+                    &st.pool,
+                    &st.network_id,
+                    uuid,
+                    live_online(&st, Some(uuid)),
+                )
+                .await
+            })
+            .await
+            {
+                Ok(v) => Json(v).into_response(),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+            }
+        }
         Err(msg) => (StatusCode::BAD_REQUEST, msg).into_response(),
     }
 }

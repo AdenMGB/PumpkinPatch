@@ -40,6 +40,7 @@ pub async fn plan_http_start(
         pool: inner.db.pool().clone(),
         online_by_server: Arc::new(online_by_server),
         static_export_dir: Some(export_dir),
+        json_cache: inner.plan_json_cache.clone(),
     };
 
     tokio::spawn(async move {

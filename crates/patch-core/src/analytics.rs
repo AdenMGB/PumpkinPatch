@@ -137,6 +137,8 @@ pub fn write_patch_plan_config(
         network_id: network_id.to_string(),
         export_secret: export_secret.to_string(),
         default_join_address: default_join_address.to_string(),
+        afk_exempt_uuids: Vec::new(),
+        command_usage_exempt_uuids: Vec::new(),
     };
     let path = config_file_path(instance_path);
     let json = serde_json::to_string_pretty(&config)?;

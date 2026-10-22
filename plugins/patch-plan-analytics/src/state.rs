@@ -403,10 +403,25 @@ pub fn push_pvp_kill(
     }
 }
 
+pub fn player_afk_exempt(rt: &RuntimeState, player_uuid: &str) -> bool {
+    rt.config
+        .afk_exempt_uuids
+        .iter()
+        .any(|u| u.eq_ignore_ascii_case(player_uuid))
+}
+
+pub fn player_command_usage_exempt(rt: &RuntimeState, player_uuid: &str) -> bool {
+    rt.config
+        .command_usage_exempt_uuids
+        .iter()
+        .any(|u| u.eq_ignore_ascii_case(player_uuid))
+}
+
 pub fn session_activity(rt: &mut RuntimeState, player: &Player, now_ms: i64) {
     let id = player_id(player);
+    let ignore_afk = player_afk_exempt(rt, &id);
     if let Some(session) = rt.active_sessions.get_mut(&id) {
-        rt.afk_tracker.on_activity(&id, now_ms * 1000, false, session);
+        rt.afk_tracker.on_activity(&id, now_ms * 1000, ignore_afk, session);
     }
 }
 

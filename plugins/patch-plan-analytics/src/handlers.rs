@@ -2,7 +2,8 @@ use crate::state::{
     apply_player_identity, begin_session, end_session, gamemode_label,
     note_prelogin_geolocation, parse_pvp_killer_from_death_message, player_id, push_death,
     push_event, push_pvp_kill, push_sample, record_command_usage, record_stat,
-    register_online_ping, resolve_join_address, session_activity, session_gamemode_change,
+    player_command_usage_exempt, register_online_ping, resolve_join_address, session_activity,
+    session_gamemode_change,
     session_world_change, touch_player, unregister_online_ping, unix_now, with_runtime,
 };
 use patch_plan_core::GameMode;
@@ -468,7 +469,10 @@ impl EventHandler<PlayerCommandSendEvent> for CommandHandler {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.commands_used += 1;
-            record_command_usage(rt, &event.command);
+            let id = player_id(&event.player);
+            if !player_command_usage_exempt(rt, &id) {
+                record_command_usage(rt, &event.command);
+            }
             session_activity(rt, &event.player, now);
             push_event(rt, "command", &event.player, event.command.clone());
         });

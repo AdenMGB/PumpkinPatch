@@ -2,7 +2,8 @@ use super::Result;
 use crate::state::AppStateHandle;
 use patch_core::{
     backup_plan_sqlite_file, clear_plan_network_data, import_signed_plan_export,
-    mark_plan_server_uninstalled, optimize_plan_sqlite, remove_plan_player, PlanDbBackupReport,
+    mark_plan_server_uninstalled, optimize_plan_sqlite, remove_plan_player,
+    restore_plan_sqlite_from_backup, PlanDbBackupReport,
     PlanSyncReport,
 };
 use serde::Serialize;
@@ -73,6 +74,19 @@ pub async fn plan_db_mark_server_uninstalled(
         mark_plan_server_uninstalled(inner.db.pool(), &network_id.to_string(), &server)
             .await?,
     )
+}
+
+#[tauri::command]
+#[tauri::command]
+pub async fn plan_db_restore(
+    state: tauri::State<'_, AppStateHandle>,
+    backup_path: String,
+) -> Result<()> {
+    let inner = state.get().await?;
+    restore_plan_sqlite_from_backup(inner.db.file_path(), std::path::Path::new(&backup_path))
+        .await?;
+    inner.plan_json_cache.clear().await;
+    Ok(())
 }
 
 #[tauri::command]

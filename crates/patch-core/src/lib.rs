@@ -49,7 +49,8 @@ pub use analytics::{
 pub use plan_store::ensure_plan_schema;
 pub use plan_store::{
     graph_players_online, list_command_usages, list_kills, list_players_table, list_sessions,
-    list_join_addresses, network_overview_v1, ping_table_v1, player_profile_v1, player_versus_v1,
+    list_join_addresses, network_overview_v1, ping_table_v1, player_gdpr_export_json,
+    player_profile_v1, player_versus_v1,
     server_overview_v1, sessions_overview_v1, PlanJoinAddressRow, PlanSessionsOverviewV1,
     PlanCommandUsageRow, PlanGraphPlayersOnline, PlanKillRow, PlanNetworkOverviewV1, PlanPingTableRow,
     PlanPlayerConnectionRow, PlanPlayerNicknameRow, PlanPlayerProfileStats, PlanPlayerProfileV1,
@@ -92,7 +93,8 @@ pub use plan_overviews::{
 };
 pub use plan_db::{
     backup_plan_sqlite_file, clear_plan_network_data, mark_plan_server_uninstalled,
-    optimize_plan_sqlite, process_desktop_plan_requests, remove_plan_player, PlanDbBackupReport,
+    optimize_plan_sqlite, process_desktop_plan_requests, remove_plan_player,
+    restore_plan_sqlite_from_backup, PlanDbBackupReport,
 };
 pub use plan_import::import_signed_plan_export;
 pub use plan_sync::sync_network_plan_exports;

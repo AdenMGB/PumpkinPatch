@@ -121,6 +121,12 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         CommandNode::argument("server", &ArgumentType::String(StringType::Word))
                             .execute(DbUninstalledHandler),
                     ),
+                )
+                .then(
+                    CommandNode::literal("restore").then(
+                        CommandNode::argument("file", &ArgumentType::String(StringType::Greedy))
+                            .execute(DbRestoreHandler),
+                    ),
                 ),
         )
         .then(literal_aliases("accept", &["yes", "y"], AcceptDbHandler))
@@ -993,6 +999,37 @@ impl CommandHandler for CancelDbHandler {
         require_console(&sender)?;
         let _ = with_runtime(|rt| {
             rt.pending_db_op = None;
+        });
+        Ok(1)
+    }
+}
+
+struct DbRestoreHandler;
+
+impl CommandHandler for DbRestoreHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let path = match args.get_value("file") {
+            Arg::Simple(s) => s.to_string(),
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan db restore <backup.db>"),
+                ));
+            }
+        };
+        let _ = with_runtime(|rt| {
+            queue_desktop_plan_request(
+                rt,
+                DesktopPlanRequest::DbRestore {
+                    backup_path: path,
+                },
+            );
+            sync_plan_export(rt, server.get_player_count());
         });
         Ok(1)
     }

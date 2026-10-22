@@ -15,6 +15,22 @@ pub async fn optimize_plan_sqlite(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
+pub async fn restore_plan_sqlite_from_backup(db_path: &Path, backup_path: &Path) -> Result<()> {
+    if !backup_path.exists() {
+        return Err(Error::NotFound(format!(
+            "backup file not found: {}",
+            backup_path.display()
+        )));
+    }
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = db_path.with_extension("restore.part");
+    std::fs::copy(backup_path, &tmp)?;
+    std::fs::rename(tmp, db_path)?;
+    Ok(())
+}
+
 pub async fn backup_plan_sqlite_file(db_path: &Path, backups_dir: &Path) -> Result<PlanDbBackupReport> {
     if !db_path.exists() {
         return Err(Error::NotFound(format!(
@@ -141,6 +157,11 @@ pub async fn process_desktop_plan_requests(
             }
             patch_analytics_protocol::DesktopPlanRequest::DbMarkServerUninstalled { server } => {
                 mark_plan_server_uninstalled(pool, network_id, server).await.unwrap_or(false)
+            }
+            patch_analytics_protocol::DesktopPlanRequest::DbRestore { backup_path } => {
+                restore_plan_sqlite_from_backup(db_path, Path::new(backup_path))
+                    .await
+                    .is_ok()
             }
         };
         if ok {

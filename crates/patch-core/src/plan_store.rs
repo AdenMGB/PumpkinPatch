@@ -1684,6 +1684,21 @@ pub struct PlanPlayerProfileV1 {
     pub kills_as_victim: Vec<PlanKillRow>,
 }
 
+pub async fn player_gdpr_export_json(
+    pool: &SqlitePool,
+    network_id: &str,
+    player_uuid: &str,
+) -> Result<serde_json::Value> {
+    let profile = player_profile_v1(pool, network_id, player_uuid).await?;
+    Ok(serde_json::json!({
+        "schema": "plan-gdpr-export-v1",
+        "exported_at_ms": chrono::Utc::now().timestamp_millis(),
+        "network_id": network_id,
+        "player_uuid": player_uuid,
+        "profile": profile,
+    }))
+}
+
 pub async fn player_profile_v1(
     pool: &SqlitePool,
     network_id: &str,
