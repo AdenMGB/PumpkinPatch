@@ -27,7 +27,10 @@ pub fn plan_capabilities_v1() -> Value {
             "QueryService": { "available": true, "write_enabled": true, "write_tables": [
                 "plan_statistic_totals",
                 "plan_user_statistic_totals",
-                "plan_commandusages"
+                "plan_commandusages",
+                "plan_extension_user_values",
+                "plan_extension_server_values",
+                "plan_extension_groups"
             ]},
             "ResolverService": { "available": true }
         }

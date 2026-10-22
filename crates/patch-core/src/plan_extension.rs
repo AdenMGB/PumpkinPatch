@@ -63,6 +63,15 @@ struct Registry {
     extensions: Vec<Box<dyn PlanDataExtension>>,
 }
 
+/// Invokes `f` for each registered native extension (SQL sync, exports).
+pub fn for_each_extension(mut f: impl FnMut(&dyn PlanDataExtension)) {
+    ensure_builtin_extensions();
+    let reg = registry().read().expect("extension registry lock");
+    for ext in &reg.extensions {
+        f(ext.as_ref());
+    }
+}
+
 fn registry() -> &'static RwLock<Registry> {
     static REG: OnceLock<RwLock<Registry>> = OnceLock::new();
     REG.get_or_init(|| {

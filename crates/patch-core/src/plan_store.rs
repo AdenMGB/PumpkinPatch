@@ -256,6 +256,7 @@ pub async fn ensure_plan_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await;
+    crate::plan_extension_sql::ensure_extension_sql_schema(pool).await?;
     Ok(())
 }
 
@@ -356,6 +357,9 @@ pub async fn ingest_payload(
             report.performance_samples_inserted += 1;
         }
     }
+
+    let _ = crate::plan_extension_sql::sync_registered_extensions_to_sql(pool, network_id, server_id)
+        .await?;
 
     Ok(report)
 }

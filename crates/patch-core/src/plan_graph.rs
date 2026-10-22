@@ -66,8 +66,15 @@ pub struct GeolocationSlice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeolocationBarSlice {
+    pub name: String,
+    pub value: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeolocationGraphResponse {
     pub geolocation_series: Vec<GeolocationSlice>,
+    pub geolocation_bar_series: Vec<GeolocationBarSlice>,
 }
 
 async fn geolocation_series(
@@ -104,18 +111,28 @@ async fn geolocation_series(
         .await?
     };
 
+    let geolocation_series = rows
+        .iter()
+        .map(|r| {
+            let name: String = r.get("name");
+            GeolocationSlice {
+                code: geolocation_code(&name),
+                name,
+                value: r.get::<i64, _>("value") as u64,
+            }
+        })
+        .collect::<Vec<_>>();
+    let geolocation_bar_series = geolocation_series
+        .iter()
+        .take(16)
+        .map(|s| GeolocationBarSlice {
+            name: s.name.clone(),
+            value: s.value,
+        })
+        .collect();
     Ok(GeolocationGraphResponse {
-        geolocation_series: rows
-            .iter()
-            .map(|r| {
-                let name: String = r.get("name");
-                GeolocationSlice {
-                    code: geolocation_code(&name),
-                    name,
-                    value: r.get::<i64, _>("value") as u64,
-                }
-            })
-            .collect(),
+        geolocation_series,
+        geolocation_bar_series,
     })
 }
 

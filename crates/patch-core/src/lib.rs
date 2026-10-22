@@ -16,6 +16,7 @@ mod plan_auth;
 mod plan_web_groups;
 mod plan_extension;
 mod plan_data_clear;
+mod plan_extension_sql;
 mod plan_export;
 mod plan_theme;
 mod orchestration;
@@ -90,8 +91,10 @@ pub use plan_query::{
 pub use plan_data_clear::{
     plan_data_clear_events_since, record_plan_player_data_cleared, PlanDataClearEvent,
 };
+pub use plan_extension_sql::sync_registered_extensions_to_sql;
 pub use plan_extension::{
-    ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,
+    ensure_builtin_extensions, extension_data_v1, for_each_extension, register_plan_extension,
+    PlanExtensionDataV1,
     PlanExtensionPlugin, PlanExtensionTab, ExtensionQueryProvider, PluginBooleanGroupFilter,
     PluginNumberFilter,
 };
