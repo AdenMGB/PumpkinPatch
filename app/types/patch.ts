@@ -556,6 +556,12 @@ export interface TendrilVoicePeer {
   packets_buffered: number
 }
 
+export interface PackManifest {
+  pack_format: number
+  description: string
+  files: Record<string, string>
+}
+
 export interface TendrilVoiceFlushResult {
   speaker_uuid: string
   captured_packets: number

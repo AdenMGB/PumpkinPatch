@@ -297,6 +297,18 @@ export function usePatchApi() {
         z,
         dimension,
       }),
+    patchworkFingerprintDir: (dir: string) => invoke<string>('patchwork_fingerprint_dir', { dir }),
+    patchworkMergePackDirs: (baseDir: string, overlayDir: string) =>
+      invoke<import('~/types/patch').PackManifest>('patchwork_merge_pack_dirs', {
+        baseDir,
+        overlayDir,
+      }),
+    patchworkMaterializeMergedPack: (baseDir: string, overlayDir: string, outputDir: string) =>
+      invoke<import('~/types/patch').PackManifest>('patchwork_materialize_merged_pack', {
+        baseDir,
+        overlayDir,
+        outputDir,
+      }),
     vineyardPublishVoicePosition: (
       playerUuid: string,
       x: number,

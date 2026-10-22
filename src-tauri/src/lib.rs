@@ -111,6 +111,7 @@ pub fn run() {
             api::platform::patch_cas_materialize_blueprint,
             api::platform::patchwork_merge_pack_dirs,
             api::platform::patchwork_materialize_merged_pack,
+            api::platform::patchwork_fingerprint_dir,
             api::voice::tendril_voice_start,
             api::voice::tendril_voice_stats,
             api::voice::tendril_voice_list_peers,

@@ -242,18 +242,25 @@ fn resolve_sessions_combat(inner: &str, ctx: &PlanPlaceholderContext) -> Option<
 }
 
 fn resolve_recent_kill(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
-    let rest = inner.strip_prefix("plan_player_recent_kill_")?;
-    if let Some(idx) = rest.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= 10) {
-        return ctx
-            .player_recent_kills
-            .get(idx - 1)
-            .map(|(victim, _)| victim.clone());
+    if let Some(rest) = inner.strip_prefix("plan_player_recent_kill_weapon_") {
+        let idx = rest.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= 10)?;
+        return Some(
+            ctx.player_recent_kills
+                .get(idx - 1)
+                .map(|(_, weapon)| weapon.clone())
+                .unwrap_or_default(),
+        );
     }
-    let rest = inner.strip_prefix("plan_player_recent_kill_weapon_")?;
-    let idx = rest.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= 10)?;
-    ctx.player_recent_kills
-        .get(idx - 1)
-        .map(|(_, weapon)| weapon.clone())
+    if let Some(rest) = inner.strip_prefix("plan_player_recent_kill_") {
+        let idx = rest.parse::<usize>().ok().filter(|n| *n >= 1 && *n <= 10)?;
+        return Some(
+            ctx.player_recent_kills
+                .get(idx - 1)
+                .map(|(victim, _)| victim.clone())
+                .unwrap_or_default(),
+        );
+    }
+    None
 }
 
 fn resolve_server_session_duration(inner: &str, ctx: &PlanPlaceholderContext) -> Option<String> {
@@ -342,15 +349,22 @@ fn resolve_top_placeholder(inner: &str, ctx: &PlanPlaceholderContext) -> Option<
     let idx = rank - 1;
     let ranked = ranked_for_window(ctx, window_ms);
     if is_amount {
-        let entry = ranked.get(idx)?;
-        let secs = match *kind {
-            "active" => entry.1.saturating_sub(entry.2),
-            "afk" => entry.2,
-            _ => entry.1,
+        let secs = match ranked.get(idx) {
+            Some(entry) => match *kind {
+                "active" => entry.1.saturating_sub(entry.2),
+                "afk" => entry.2,
+                _ => entry.1,
+            },
+            None => 0,
         };
         return Some(format_duration(secs));
     }
-    ranked.get(idx).map(|(name, _, _)| name.clone())
+    Some(
+        ranked
+            .get(idx)
+            .map(|(name, _, _)| name.clone())
+            .unwrap_or_default(),
+    )
 }
 
 fn ranked_for_window(ctx: &PlanPlaceholderContext, _window_ms: i64) -> Vec<(String, u64, u64)> {
@@ -583,6 +597,142 @@ mod tests {
                 resolve_placeholder(key, &ctx).is_some(),
                 "expected {key} to resolve"
             );
+        }
+    }
+
+    #[test]
+    fn indepth_full_server_catalog_resolves() {
+        use crate::placeholder_catalog::{server_placeholder_keys, wrap_percent};
+        let ctx = rich_server_ctx();
+        let missing: Vec<_> = server_placeholder_keys()
+            .iter()
+            .map(|k| wrap_percent(k))
+            .filter(|k| resolve_placeholder(k, &ctx).is_none())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "unresolved server placeholders: {:?}",
+            missing
+        );
+    }
+
+    #[test]
+    fn indepth_full_player_catalog_resolves() {
+        use crate::placeholder_catalog::{player_placeholder_keys, wrap_percent};
+        let ctx = rich_player_ctx();
+        let missing: Vec<_> = player_placeholder_keys()
+            .iter()
+            .map(|k| wrap_percent(k))
+            .filter(|k| resolve_placeholder(k, &ctx).is_none())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "unresolved player placeholders: {:?}",
+            missing
+        );
+    }
+
+    fn rich_server_ctx() -> PlanPlaceholderContext {
+        PlanPlaceholderContext {
+            server_name: "Hub".into(),
+            server_uuid: "uuid".into(),
+            players_online: 5,
+            players_total: 100,
+            peak_online: 42,
+            players_new_day: 1,
+            players_new_week: 2,
+            players_new_month: 3,
+            players_unique_day: 4,
+            players_unique_week: 5,
+            players_unique_month: 6,
+            sessions_playtime_secs: 3600,
+            sessions_active_secs: 3000,
+            sessions_afk_secs: 600,
+            sessions_count_day: 10,
+            sessions_count_week: 20,
+            sessions_count_month: 30,
+            sessions_avg_length_day: 120,
+            sessions_avg_length_week: 180,
+            sessions_avg_length_month: 240,
+            sessions_avg_unique_players_day: 3,
+            sessions_avg_unique_players_week: 4,
+            sessions_avg_unique_players_month: 5,
+            deaths_total: 9,
+            deaths_day: 1,
+            deaths_week: 2,
+            deaths_month: 3,
+            mob_kills_total: 4,
+            mob_kills_day: 1,
+            mob_kills_week: 1,
+            mob_kills_month: 2,
+            player_kills_total: 5,
+            player_kills_day: 1,
+            player_kills_week: 2,
+            player_kills_month: 2,
+            avg_tps_day: Some(19.8),
+            avg_tps_week: Some(19.5),
+            avg_tps_month: Some(19.2),
+            tps_spikes_day: 1,
+            tps_spikes_week: 2,
+            tps_spikes_month: 3,
+            avg_ping_day: Some(45.0),
+            avg_ping_week: Some(50.0),
+            avg_ping_month: Some(55.0),
+            min_ping_day: Some(20),
+            max_ping_day: Some(120),
+            timezone_offset: "UTC".into(),
+            peak_online_date_alltime: "2020".into(),
+            peak_online_date_recent: "2021".into(),
+            players_regular: 8,
+            total_joins: 500,
+            sessions_playtime_day: 100,
+            sessions_playtime_week: 200,
+            sessions_playtime_month: 300,
+            sessions_active_day: 80,
+            sessions_active_week: 160,
+            sessions_active_month: 240,
+            sessions_afk_day: 20,
+            sessions_afk_week: 40,
+            sessions_afk_month: 60,
+            top_playtime: vec![("Alex".into(), 100, 10)],
+            ..PlanPlaceholderContext::default()
+        }
+    }
+
+    fn rich_player_ctx() -> PlanPlaceholderContext {
+        let now_ms = 1_700_000_000_000i64;
+        PlanPlaceholderContext {
+            player_name: Some("Steve".into()),
+            player_uuid: Some("player-1".into()),
+            playtime_secs: 7200,
+            afk_secs: 600,
+            deaths: 3,
+            player_kills: 5,
+            mob_kills: 12,
+            kick_count: 1,
+            geolocation: "AU".into(),
+            registered_unix: 1_600_000_000,
+            last_seen_unix: 1_699_000_000,
+            session_triples: vec![(now_ms - 3_600_000, now_ms, 60_000)],
+            now_ms,
+            avg_tps_day: Some(20.0),
+            avg_tps_week: Some(19.0),
+            avg_tps_month: Some(18.0),
+            avg_ping_day: Some(40.0),
+            avg_ping_week: Some(45.0),
+            avg_ping_month: Some(50.0),
+            min_ping_day: Some(15),
+            max_ping_day: Some(90),
+            player_ping_avg: Some(42.0),
+            player_ping_min: Some(20),
+            player_ping_max: Some(80),
+            favorite_server: "Survival".into(),
+            player_is_banned: false,
+            player_is_operator: true,
+            player_session_length_longest_secs: 3600,
+            player_recent_kills: vec![("Victim".into(), "diamond_sword".into())],
+            top_playtime: vec![("Steve".into(), 7200, 600)],
+            ..rich_server_ctx()
         }
     }
 

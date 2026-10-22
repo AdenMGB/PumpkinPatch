@@ -5,6 +5,7 @@ mod apiv5;
 mod data_extension;
 mod geolocation;
 mod join_address;
+mod placeholder_catalog;
 mod placeholders;
 mod session;
 

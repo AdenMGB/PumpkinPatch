@@ -2,7 +2,8 @@ use super::Result;
 use crow_swarm::{SwarmPlan, SwarmReport};
 use patch_cas::CasStore;
 use patchwork::{
-    index_pack_assets, materialize_merged_pack, merge_manifests, read_pack_manifest, PackManifest,
+    fingerprint_dir, index_pack_assets, materialize_merged_pack, merge_manifests, read_pack_manifest,
+    PackManifest,
 };
 use patch_audit::AuditLedger;
 use serde::Serialize;
@@ -45,6 +46,11 @@ pub async fn patchwork_materialize_merged_pack(
         std::path::Path::new(&overlay_dir),
         std::path::Path::new(&output_dir),
     )?)
+}
+
+#[tauri::command]
+pub fn patchwork_fingerprint_dir(dir: String) -> Result<String> {
+    Ok(fingerprint_dir(std::path::Path::new(&dir)))
 }
 
 #[tauri::command]
