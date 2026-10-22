@@ -21,6 +21,7 @@ mod plan_extension_sql;
 mod plan_export;
 mod plan_geolite;
 mod plan_tls;
+mod plan_placeholder_sql;
 mod plan_theme;
 mod orchestration;
 mod harvest_sync;
@@ -55,6 +56,7 @@ pub use analytics::{
     ServerAnalyticsSnapshot,
 };
 pub use plan_store::ensure_plan_schema;
+pub use plan_placeholder_sql::plan_placeholder_context_from_sql;
 pub fn gourd_pool_scale_recommend(
     current_ccu: u32,
     active_backends: u32,

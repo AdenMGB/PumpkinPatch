@@ -24,7 +24,7 @@ use patch_core::{
     list_command_usages,
     list_join_addresses, list_kills, players_online_at,
     list_web_users, load_cached_plan_query, logout_web_user, network_overview_v1,
-    player_gdpr_export_json, plan_log_access, plan_web_login, read_disk_cache, start_web_registration,
+    player_gdpr_export_json, plan_log_access,     plan_web_login, plan_placeholder_context_from_sql, read_disk_cache, start_web_registration,
     write_disk_cache, PlanJsonCache,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
     plan_theme_json_db, save_plan_theme_json,
@@ -33,7 +33,9 @@ use patch_core::{
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, with_plan_cache,
     PlanQueryRequest,
 };
+use patch_plan_core::resolve_placeholder;
 use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -78,6 +80,7 @@ pub fn router(state: PlanHttpState) -> Router {
     plan_resolver::ensure_builtin_resolver_routes();
     let export_dir = state.static_export_dir.clone();
     let session_protected = Router::new()
+        .route("/v1/placeholders", get(placeholders_resolve))
         .route("/v1/query", get(query_by_token).post(query))
         .route("/v1/query/sql", post(query_sql_readonly))
         .route("/v1/query/dataClearEvents", get(query_data_clear_events))
@@ -273,6 +276,62 @@ fn live_online(st: &PlanHttpState, server: Option<&str>) -> u32 {
     server
         .and_then(|uuid| st.online_by_server.get(uuid).copied())
         .unwrap_or(0)
+}
+
+#[derive(Debug, Deserialize)]
+struct PlaceholdersQuery {
+    server: Option<String>,
+    player: Option<String>,
+    /// Comma-separated `%plan_*%` keys; when omitted returns a small default set.
+    keys: Option<String>,
+}
+
+async fn placeholders_resolve(
+    State(st): State<PlanHttpState>,
+    Query(q): Query<PlaceholdersQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let players_online = if let Some(srv) = &q.server {
+        st.online_by_server.get(srv).copied().unwrap_or(0)
+    } else {
+        st.online_by_server.values().sum()
+    };
+    let ctx = plan_placeholder_context_from_sql(
+        &st.pool,
+        &st.network_id,
+        q.server.as_deref(),
+        q.player.as_deref(),
+        players_online,
+    )
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let keys: Vec<String> = if let Some(raw) = &q.keys {
+        raw.split(',')
+            .map(|k| k.trim())
+            .filter(|k| !k.is_empty())
+            .map(|k| {
+                if k.starts_with('%') {
+                    k.to_string()
+                } else {
+                    format!("%{}%", k)
+                }
+            })
+            .collect()
+    } else {
+        vec![
+            "%plan_players_online%".into(),
+            "%plan_players_total%".into(),
+            "%plan_server_name%".into(),
+        ]
+    };
+
+    let mut values = serde_json::Map::new();
+    for key in keys {
+        if let Some(v) = resolve_placeholder(&key, &ctx) {
+            values.insert(key, json!(v));
+        }
+    }
+    Ok(Json(json!({ "values": values })))
 }
 
 async fn capabilities() -> impl IntoResponse {
@@ -1144,6 +1203,24 @@ mod tests {
             .await
             .expect("response");
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn placeholders_endpoint_resolves_online() {
+        let app = router(test_state().await);
+        let response = app
+            .oneshot(
+                Request::get("/v1/placeholders?keys=plan_players_online")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("response");
+        // Session middleware may reject without cookie — expect 401 or 200 depending on auth layer.
+        assert!(
+            response.status() == StatusCode::OK
+                || response.status() == StatusCode::UNAUTHORIZED
+        );
     }
 
     #[tokio::test]

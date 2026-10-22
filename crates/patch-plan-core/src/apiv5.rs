@@ -13,7 +13,8 @@ pub fn plan_capabilities_v1() -> Value {
             "QUERY_SERVICE_WRITE",
             "PAGE_EXTENSIONS",
             "PLAYER_DATA_CLEAR_EVENTS",
-            "MANUAL_EXTENSION_REFRESH"
+            "MANUAL_EXTENSION_REFRESH",
+            "PLACEHOLDER_API"
         ],
         "services": {
             "CapabilityService": { "available": true },
@@ -34,7 +35,8 @@ pub fn plan_capabilities_v1() -> Value {
                 "plan_extension_tables",
                 "plan_extension_table_rows"
             ]},
-            "ResolverService": { "available": true }
+            "ResolverService": { "available": true },
+            "PlaceholderService": { "available": true, "endpoint": "/v1/placeholders" }
         }
     })
 }
