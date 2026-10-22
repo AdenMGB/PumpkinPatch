@@ -4,7 +4,7 @@ use crate::state::{
     push_event, push_pvp_kill, push_sample, record_command_usage, record_stat,
     player_command_usage_exempt, register_online_ping, resolve_join_address, session_activity,
     session_gamemode_change,
-    session_world_change, touch_player, unregister_online_ping, unix_now, with_runtime,
+    session_world_change, touch_player, unregister_online_ping, unix_now, with_analytics,
 };
 use patch_plan_core::GameMode;
 use patch_analytics_protocol::MAX_RECENT_ADVANCEMENTS_PER_PLAYER;
@@ -36,7 +36,7 @@ impl EventHandler<PlayerMoveEvent> for MoveHandler {
             || from.1.floor() != to.1.floor()
             || from.2.floor() != to.2.floor();
         if block_moved {
-            with_runtime(|rt| {
+            with_analytics(|rt| {
                 session_activity(rt, &event.player, unix_now());
             });
         }
@@ -52,10 +52,7 @@ impl EventHandler<PlayerJoinEvent> for JoinHandler {
         event: <PlayerJoinEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerJoinEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
         let now = unix_now();
-        with_runtime(|rt| {
-            if !rt.analytics_enabled {
-                return;
-            }
+        with_analytics(|rt| {
             rt.total_joins += 1;
             let entry = touch_player(rt, &event.player, now);
             entry.join_count += 1;
@@ -80,7 +77,7 @@ impl EventHandler<PlayerLeaveEvent> for LeaveHandler {
         event: <PlayerLeaveEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerLeaveEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
         let now = unix_now();
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let id = player_id(&event.player);
             if let Some(entry) = rt.players.get_mut(&id) {
                 let delta = (now - entry.last_seen_unix).max(0) as u64;
@@ -104,7 +101,7 @@ impl EventHandler<PlayerPreLoginEvent> for PreLoginHandler {
         _server: Server,
         event: <PlayerPreLoginEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerPreLoginEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             note_prelogin_geolocation(rt, &event.player_uuid, &event.ip_address);
         });
         event
@@ -118,7 +115,7 @@ impl EventHandler<PlayerLoginEvent> for LoginHandler {
         _server: Server,
         event: <PlayerLoginEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerLoginEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             rt.total_logins += 1;
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
@@ -136,10 +133,7 @@ impl EventHandler<PlayerKickEvent> for KickHandler {
         _server: Server,
         event: <PlayerKickEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerKickEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
-            if !rt.analytics_enabled {
-                return;
-            }
+        with_analytics(|rt| {
             rt.total_kicks += 1;
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
@@ -163,7 +157,7 @@ impl EventHandler<PlayerDeathEvent> for DeathHandler {
             return event;
         }
         let msg = event.death_message.get_text();
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.deaths += 1;
@@ -196,7 +190,7 @@ impl EventHandler<PlayerRespawnEvent> for RespawnHandler {
         _server: Server,
         event: <PlayerRespawnEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerRespawnEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             push_event(rt, "respawn", &event.player, "respawned".into());
         });
         event
@@ -213,7 +207,7 @@ impl EventHandler<PlayerAdvancementDoneEvent> for AdvancementHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.advancements += 1;
@@ -243,7 +237,7 @@ impl EventHandler<PlayerStatisticIncrementEvent> for StatisticHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             record_stat(rt, &event.player, &event.statistic_id, event.amount);
         });
         event
@@ -261,7 +255,7 @@ impl EventHandler<PlayerGamemodeChangeEvent> for GamemodeHandler {
             return event;
         }
         let new_mode = gamemode_label(event.new_gamemode);
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.current_gamemode = new_mode.clone();
@@ -297,7 +291,7 @@ impl EventHandler<PlayerChangedWorldEvent> for WorldChangeHandler {
             return event;
         }
         let world = event.to_world.get_name();
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.last_world = world.clone();
@@ -319,7 +313,7 @@ impl EventHandler<PlayerTeleportEvent> for TeleportHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.teleports += 1;
@@ -339,7 +333,7 @@ impl EventHandler<PlayerHarvestBlockEvent> for HarvestHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.blocks_harvested += 1;
@@ -358,7 +352,7 @@ impl EventHandler<PlayerItemConsumeEvent> for ConsumeHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.items_consumed += 1;
@@ -375,7 +369,7 @@ impl EventHandler<PlayerItemBreakEvent> for ItemBreakHandler {
         _server: Server,
         event: <PlayerItemBreakEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerItemBreakEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.items_broken += 1;
@@ -395,7 +389,7 @@ impl EventHandler<PlayerRecipeDiscoverEvent> for RecipeHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.recipes_discovered += 1;
@@ -412,7 +406,7 @@ impl EventHandler<PlayerExpChangeEvent> for ExpHandler {
         _server: Server,
         event: <PlayerExpChangeEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerExpChangeEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.xp_gained += event.amount as i64;
@@ -428,7 +422,7 @@ impl EventHandler<PlayerLevelChangeEvent> for LevelHandler {
         _server: Server,
         event: <PlayerLevelChangeEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerLevelChangeEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.xp_level = event.new_level;
@@ -453,7 +447,7 @@ impl EventHandler<PlayerChatEvent> for ChatHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.chat_messages += 1;
@@ -473,7 +467,7 @@ impl EventHandler<PlayerCommandSendEvent> for CommandHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.commands_used += 1;
@@ -502,7 +496,7 @@ impl EventHandler<PlayerFishEvent> for FishHandler {
         if !matches!(event.state, PlayerFishState::CaughtFish) {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.fish_caught += 1;
@@ -524,7 +518,7 @@ impl EventHandler<PlayerDropItemEvent> for DropItemHandler {
         _server: Server,
         event: <PlayerDropItemEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerDropItemEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.items_dropped += 1;
@@ -540,7 +534,7 @@ impl EventHandler<PlayerBedEnterEvent> for BedEnterHandler {
         _server: Server,
         event: <PlayerBedEnterEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerBedEnterEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.beds_entered += 1;
@@ -560,7 +554,7 @@ impl EventHandler<PlayerItemDamageEvent> for ItemDamageHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.items_damaged += 1;
@@ -579,7 +573,7 @@ impl EventHandler<PlayerPortalEvent> for PortalHandler {
         if event.cancelled {
             return event;
         }
-        with_runtime(|rt| {
+        with_analytics(|rt| {
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
             entry.portal_uses += 1;

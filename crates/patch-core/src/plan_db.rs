@@ -200,6 +200,7 @@ pub async fn process_desktop_plan_requests(
                     .await
                     .is_ok()
             }
+            patch_analytics_protocol::DesktopPlanRequest::ExportStaticBundle => true,
         };
         if ok {
             applied += 1;

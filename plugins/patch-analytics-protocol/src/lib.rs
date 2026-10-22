@@ -221,6 +221,8 @@ pub enum DesktopPlanRequest {
     DbClearNetwork,
     DbMarkServerUninstalled { server: String },
     DbRestore { backup_path: String },
+    /// Queue static Plan JSON bundle under the network export directory (desktop sync).
+    ExportStaticBundle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

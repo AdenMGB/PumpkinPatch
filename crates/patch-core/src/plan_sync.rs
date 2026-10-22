@@ -2,6 +2,7 @@ use crate::analytics::read_server_analytics;
 use crate::db::Database;
 use crate::error::Result;
 use crate::models::{NetworkRecord, ServerRecord};
+use crate::plan_export::{default_export_dir, export_plan_static_bundle};
 use crate::plan_store::{ingest_payload, PlanSyncReport};
 use sqlx::Row;
 use std::path::Path;
@@ -18,6 +19,7 @@ pub async fn sync_network_plan_exports(
 
     let max_age = 900;
     let mut reports = Vec::new();
+    let mut export_static_bundle = false;
     for server in servers {
         match sync_server_plan_export(
             db,
@@ -27,12 +29,38 @@ pub async fn sync_network_plan_exports(
             export_secret,
             max_age,
             &backups_dir,
+            &mut export_static_bundle,
         )
         .await
         {
             Ok(Some(report)) => reports.push(report),
             Ok(None) | Err(_) => {}
         }
+    }
+    if export_static_bundle && !servers.is_empty() {
+        let overview = crate::aggregate_network_analytics(network, servers, export_secret)?;
+        let triples: Vec<(String, String, u32)> = overview
+            .servers
+            .iter()
+            .map(|s| (s.server_id.clone(), s.server_name.clone(), s.online_now))
+            .collect();
+        let primary = &servers[0];
+        let live_online = overview
+            .servers
+            .iter()
+            .find(|s| s.server_id == primary.id.to_string())
+            .map(|s| s.online_now)
+            .unwrap_or(0);
+        let dir = default_export_dir(Path::new(&network.data_path));
+        let _ = export_plan_static_bundle(
+            pool,
+            &network.id.to_string(),
+            &primary.id.to_string(),
+            &dir,
+            live_online,
+            &triples,
+        )
+        .await;
     }
     Ok(reports)
 }
@@ -45,6 +73,7 @@ async fn sync_server_plan_export(
     export_secret: &str,
     max_age: i64,
     backups_dir: &Path,
+    export_static_bundle: &mut bool,
 ) -> Result<Option<PlanSyncReport>> {
     let snap = read_server_analytics(
         Path::new(&server.data_path),
@@ -70,6 +99,19 @@ async fn sync_server_plan_export(
     .await;
     let _ = crate::plan_auth::process_web_admin_actions(pool, &signed.payload.web_admin_actions)
         .await;
+    if signed
+        .payload
+        .desktop_plan_requests
+        .iter()
+        .any(|r| {
+            matches!(
+                r,
+                patch_analytics_protocol::DesktopPlanRequest::ExportStaticBundle
+            )
+        })
+    {
+        *export_static_bundle = true;
+    }
     let _ = crate::plan_db::process_desktop_plan_requests(
         pool,
         &network.id.to_string(),

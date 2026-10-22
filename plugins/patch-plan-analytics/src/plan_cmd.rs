@@ -2,7 +2,8 @@
 
 use crate::state::{
     drain_desktop_plan_requests, drain_registration_completions, drain_web_admin_actions,
-    persist_state, placeholder_context_for, queue_desktop_plan_request, PendingDbOp,
+    persist_state, placeholder_context_for, queue_desktop_plan_request, reload_config_from_disk,
+    PendingDbOp,
     player_id, queue_registration_completion, queue_web_admin_action, unix_now, with_runtime,
     write_export,
 };
@@ -527,15 +528,15 @@ impl CommandHandler for ExportHandler {
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         let player = require_player(&sender)?;
-        let _ = with_runtime(|rt| {
+        let msg = with_runtime(|rt| {
             let online = server.get_player_count();
+            queue_desktop_plan_request(rt, DesktopPlanRequest::ExportStaticBundle);
             write_export(rt, online).ok();
             persist_state(rt).ok();
-        });
-        player.send_system_message(
-            TextComponent::text("§aPlan export§r snapshot written for this server (Pumpkin Patch sync)."),
-            false,
-        );
+            "§aPlan export§r snapshot written; static bundle queued for Pumpkin Patch sync."
+        })
+        .unwrap_or("§7Plan runtime not initialized.");
+        player.send_system_message(TextComponent::text(msg), false);
         Ok(1)
     }
 }
@@ -763,15 +764,18 @@ impl CommandHandler for ReloadHandler {
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         let player = require_player(&sender)?;
-        let _ = with_runtime(|rt| {
+        let msg = with_runtime(|rt| {
+            if let Err(e) = reload_config_from_disk(rt) {
+                return format!("§cPatch Plan reload failed: §f{}", e);
+            }
             let online = server.get_player_count();
             write_export(rt, online).ok();
             persist_state(rt).ok();
-        });
-        player.send_system_message(
-            TextComponent::text("§aPatch Plan§r reloaded export snapshot for this server."),
-            false,
-        );
+            "§aPatch Plan§r reloaded config and export snapshot (analytics re-enabled)."
+                .to_string()
+        })
+        .unwrap_or_else(|| "§cPatch Plan§r reload failed — runtime not initialized.".into());
+        player.send_system_message(TextComponent::text(&msg), false);
         Ok(1)
     }
 }

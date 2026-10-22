@@ -2,7 +2,7 @@ use patch_analytics_protocol::{
     apply_stat_increment, ActivitySample, AnalyticsEvent, AnalyticsPayload, DeathRecord,
     PatchPlanConfig, PerformanceSample, PingWindowRecord, PlayerStats, PvpKillRecord,
     ServerTotals, SessionRecord, SignedExport, WorldTimeSlice, EXPORT_FILENAME,
-    EXPORT_SCHEMA_VERSION, MAX_ACTIVITY_SAMPLES, MAX_COMPLETED_SESSIONS_PER_PLAYER,
+    CONFIG_FILENAME, EXPORT_SCHEMA_VERSION, MAX_ACTIVITY_SAMPLES, MAX_COMPLETED_SESSIONS_PER_PLAYER,
     MAX_EXPORT_PLAYERS, MAX_PERFORMANCE_SAMPLES, MAX_PING_WINDOWS_PER_PLAYER,
     MAX_RECENT_DEATHS, MAX_RECENT_EVENTS, MAX_RECENT_PVP_KILLS, MAX_SERVER_COMMAND_USAGE_KEYS,
     STATE_FILENAME,
@@ -26,6 +26,28 @@ where
     let lock = RUNTIME.get()?;
     let mut rt = lock.lock().ok()?;
     Some(f(&mut rt))
+}
+
+/// Runs `f` only when Plan analytics collection is enabled (`/plan disable` turns this off).
+pub fn with_analytics<F>(f: F) -> Option<()>
+where
+    F: FnOnce(&mut RuntimeState),
+{
+    with_runtime(|rt| {
+        if !rt.analytics_enabled {
+            return;
+        }
+        f(rt);
+    })
+}
+
+pub fn reload_config_from_disk(rt: &mut RuntimeState) -> Result<(), String> {
+    let config_path = format!("{}/{CONFIG_FILENAME}", rt.data_folder);
+    let raw = std::fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+    rt.config = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    rt.analytics_enabled = true;
+    rt.kick_counting_enabled = true;
+    Ok(())
 }
 
 pub struct RuntimeState {
@@ -77,6 +99,9 @@ const PING_SAMPLES_PER_WINDOW: usize = 30;
 
 /// Samples TPS from wall-clock between 100-tick plugin callbacks.
 pub fn sample_performance(rt: &mut RuntimeState, online: u32, tick_period: f64) {
+    if !rt.analytics_enabled {
+        return;
+    }
     let now = std::time::Instant::now();
     if let Some(prev) = rt.last_perf_instant {
         let elapsed = now.duration_since(prev).as_secs_f64();
@@ -207,6 +232,9 @@ fn flush_ping_track(rt: &mut RuntimeState, player_uuid: &str, track: &OnlinePing
 }
 
 pub fn sample_online_pings(rt: &mut RuntimeState, server: &Server) {
+    if !rt.analytics_enabled {
+        return;
+    }
     let now = unix_now();
     if now - rt.server_enabled_at < PING_SERVER_ENABLE_DELAY_SECS {
         return;
