@@ -16,22 +16,7 @@ type ResolverHandler = fn() -> Value;
 
 fn registry() -> &'static RwLock<HashMap<String, ResolverHandler>> {
     static REG: OnceLock<RwLock<HashMap<String, ResolverHandler>>> = OnceLock::new();
-    REG.get_or_init(|| {
-        let mut map = HashMap::new();
-        map.insert(
-            "harvestmetrics".to_string(),
-            harvest_metrics_status as ResolverHandler,
-        );
-        RwLock::new(map)
-    })
-}
-
-fn harvest_metrics_status() -> Value {
-    json!({
-        "plugin": "HarvestMetrics",
-        "status": "ok",
-        "duckdb": true,
-    })
+    REG.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 pub fn register_resolver_route(plugin: &str, handler: ResolverHandler) {
@@ -41,11 +26,41 @@ pub fn register_resolver_route(plugin: &str, handler: ResolverHandler) {
         .insert(plugin.to_ascii_lowercase(), handler);
 }
 
+async fn harvest_metrics_status(st: &PlanHttpState) -> Value {
+    let users = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM plan_users WHERE network_id = ?",
+    )
+    .bind(&st.network_id)
+    .fetch_one(&st.pool)
+    .await
+    .unwrap_or(0);
+    let sessions = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM plan_sessions WHERE network_id = ?",
+    )
+    .bind(&st.network_id)
+    .fetch_one(&st.pool)
+    .await
+    .unwrap_or(0);
+    let online = st.online_by_server.values().sum::<u32>();
+    json!({
+        "plugin": "HarvestMetrics",
+        "status": "ok",
+        "duckdb": true,
+        "network_id": st.network_id,
+        "players_total": users,
+        "sessions_total": sessions,
+        "players_online": online,
+    })
+}
+
 pub async fn resolver_plugin_get(
-    State(_st): State<PlanHttpState>,
+    State(st): State<PlanHttpState>,
     Path(plugin): Path<String>,
 ) -> impl IntoResponse {
     let key = plugin.to_ascii_lowercase();
+    if key == "harvestmetrics" {
+        return Json(harvest_metrics_status(&st).await).into_response();
+    }
     let reg = registry().read().expect("resolver registry lock");
     match reg.get(&key) {
         Some(handler) => Json(handler()).into_response(),

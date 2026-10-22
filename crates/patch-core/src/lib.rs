@@ -118,7 +118,9 @@ pub use plan_web_groups::{
     delete_web_group, list_all_web_permissions, list_permissions_for_group, list_web_group_names,
     save_permissions_for_group,
 };
-pub use plan_export::{default_export_dir, export_plan_static_bundle, plan_tls_pem_paths};
+pub use plan_export::{
+    default_export_dir, export_plan_react_static_data, export_plan_static_bundle, plan_tls_pem_paths,
+};
 pub use plan_geolite::{configure_network_geolocation, geolite_cache_path};
 pub use plan_tls::{resolve_plan_tls_material, PlanTlsMaterial};
 pub use plan_allowlist::game_allowlist_bounces_v1;

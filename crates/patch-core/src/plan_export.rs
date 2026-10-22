@@ -3,9 +3,10 @@
 use crate::error::Result;
 use crate::plan_theme::plan_theme_json;
 use crate::{
-    list_join_addresses, list_kills, network_overview_v1, online_overview_v1,
-    performance_overview_v1, playerbase_overview_v1, players_v1, retention_v1, server_overview_v1,
-    sessions_overview_v1, sessions_v1,
+    extension_data_merged, game_allowlist_bounces_v1, list_command_usages, list_join_addresses,
+    list_kills, network_overview_v1, online_overview_v1, performance_overview_v1,
+    player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1, ping_table_v1,
+    retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, statistics_v1,
 };
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -77,8 +78,155 @@ pub async fn export_plan_static_bundle(
         json!(network_overview_v1(pool, network_id, network_servers).await?),
     )?;
     write("theme-default.json", plan_theme_json("default"))?;
+    export_plan_react_static_data(
+        pool,
+        network_id,
+        server_uuid,
+        export_dir,
+        live_online,
+    )
+    .await?;
     write_plan_export_index(export_dir)?;
     write_plan_export_static_assets(export_dir)?;
+    Ok(())
+}
+
+/// Pre-rendered `/data/*.json` files for Plan React static export mode (indepth.md §6.2).
+pub async fn export_plan_react_static_data(
+    pool: &SqlitePool,
+    network_id: &str,
+    server_uuid: &str,
+    export_dir: &Path,
+    live_online: u32,
+) -> Result<()> {
+    let data_dir = export_dir.join("data");
+    std::fs::create_dir_all(&data_dir)?;
+    let write = |name: &str, value: serde_json::Value| -> Result<()> {
+        let path = data_dir.join(name);
+        let tmp = path.with_extension("part");
+        std::fs::write(&tmp, serde_json::to_string_pretty(&value)?)?;
+        std::fs::rename(tmp, path)?;
+        Ok(())
+    };
+
+    let server_row = sqlx::query_as::<_, (String, String)>(
+        "SELECT uuid, name FROM plan_servers WHERE network_id = ? AND uuid = ? LIMIT 1",
+    )
+    .bind(network_id)
+    .bind(server_uuid)
+    .fetch_optional(pool)
+    .await?;
+
+    let (srv_uuid, server_name) = server_row
+        .map(|(u, n)| (u, n))
+        .unwrap_or_else(|| (server_uuid.to_string(), server_uuid.to_string()));
+
+    write(
+        &format!("serverIdentity-{}.json", srv_uuid),
+        json!({
+            "serverName": server_name,
+            "serverUuid": srv_uuid,
+            "proxyMode": false,
+        }),
+    )?;
+
+    let online = online_overview_v1(pool, network_id, Some(&srv_uuid), live_online).await?;
+    write(
+        &format!("onlineInsights-{}.json", srv_uuid),
+        json!({ "insights": online.insights }),
+    )?;
+    write(
+        &format!("playerbaseOverview-{}.json", srv_uuid),
+        json!(playerbase_overview_v1(pool, network_id, Some(&srv_uuid)).await?),
+    )?;
+    write(
+        &format!("playerVersus-{}.json", srv_uuid),
+        json!(player_versus_v1(pool, network_id, Some(&srv_uuid)).await?),
+    )?;
+    write(
+        &format!("extensionData-{}.json", srv_uuid),
+        json!(extension_data_merged(pool, network_id).await?),
+    )?;
+    write(
+        &format!("kills-{}.json", srv_uuid),
+        json!({
+            "player_kills": list_kills(pool, network_id, Some(&srv_uuid), 500).await?
+        }),
+    )?;
+    write(
+        &format!("playersTable-{}.json", srv_uuid),
+        json!(players_table_v1(pool, network_id, Some(&srv_uuid), 500).await?),
+    )?;
+    write(
+        &format!("gameAllowlistBounces-{}.json", srv_uuid),
+        json!(game_allowlist_bounces_v1(pool, network_id, Some(&srv_uuid)).await?),
+    )?;
+    write(
+        &format!("pingTable-{}.json", srv_uuid),
+        json!(ping_table_v1(pool, network_id, Some(&srv_uuid)).await?),
+    )?;
+    write(
+        &format!("retention-{}.json", srv_uuid),
+        json!(retention_v1(pool, network_id, Some(&srv_uuid), 500).await?),
+    )?;
+    write(
+        &format!("joinAddresses-{}.json", srv_uuid),
+        json!({
+            "join_addresses": list_join_addresses(pool, network_id, Some(&srv_uuid)).await?
+        }),
+    )?;
+    write(
+        &format!("statistics-{}.json", srv_uuid),
+        json!(statistics_v1(pool, network_id, Some(&srv_uuid), false).await?),
+    )?;
+
+    let plugin_rows = list_command_usages(pool, network_id, Some(&srv_uuid), 200).await?;
+    let history = plugin_rows
+        .into_iter()
+        .map(|row| {
+            json!({
+                "pluginName": row.command,
+                "timesUsed": row.times_used,
+                "serverName": row.server_name,
+            })
+        })
+        .collect::<Vec<_>>();
+    write(
+        &format!("pluginHistory-{}.json", srv_uuid),
+        json!({ "history": history }),
+    )?;
+
+    write(
+        "playersTable.json",
+        json!(players_table_v1(pool, network_id, None, 500).await?),
+    )?;
+    write(
+        "retention.json",
+        json!(retention_v1(pool, network_id, None, 500).await?),
+    )?;
+    write(
+        "joinAddresses.json",
+        json!({
+            "join_addresses": list_join_addresses(pool, network_id, None).await?
+        }),
+    )?;
+    write(
+        "network-playerbaseOverview.json",
+        json!(playerbase_overview_v1(pool, network_id, None).await?),
+    )?;
+    write(
+        "network-pingTable.json",
+        json!(ping_table_v1(pool, network_id, None).await?),
+    )?;
+    write(
+        "statistics-.json",
+        json!(statistics_v1(pool, network_id, None, false).await?),
+    )?;
+    write(
+        "statistics--aggregate.json",
+        json!(statistics_v1(pool, network_id, None, true).await?),
+    )?;
+
     Ok(())
 }
 
@@ -163,6 +311,36 @@ pub fn plan_tls_pem_paths(network_data_path: &Path) -> Option<(PathBuf, PathBuf)
         Some((cert, key))
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use crate::plan_store::ensure_plan_schema;
+
+    #[tokio::test]
+    async fn react_static_data_files_written_under_data_dir() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        ensure_plan_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO plan_servers (network_id, uuid, name, is_installed) VALUES ('net', 'srv-1', 'Lobby', 1)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        export_plan_react_static_data(&pool, "net", "srv-1", dir.path(), 3)
+            .await
+            .unwrap();
+
+        let identity = dir.path().join("data/serverIdentity-srv-1.json");
+        assert!(identity.is_file(), "missing {}", identity.display());
+        let players = dir.path().join("data/playersTable.json");
+        assert!(players.is_file());
+        let network_ret = dir.path().join("data/retention.json");
+        assert!(network_ret.is_file());
     }
 }
 

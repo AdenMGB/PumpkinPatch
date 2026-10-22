@@ -127,6 +127,7 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/network/playerbaseOverview", get(network_playerbase_overview))
         .route("/v1/network/sessionsOverview", get(network_sessions_overview))
         .route("/v1/network/pingTable", get(network_ping_table))
+        .route("/v1/network/retention", get(network_retention))
         .route("/v1/player", get(player_profile))
         .route("/v1/player/json", get(player_gdpr_json))
         .route("/v1/graph", get(graph))
@@ -165,7 +166,11 @@ pub fn router(state: PlanHttpState) -> Router {
     };
     if let Some(dir) = export_dir {
         if dir.exists() {
-            router = router.nest_service("/export", ServeDir::new(dir));
+            router = router.nest_service("/export", ServeDir::new(dir.clone()));
+            let react_data = dir.join("data");
+            if react_data.is_dir() {
+                router = router.nest_service("/data", ServeDir::new(react_data));
+            }
         }
     }
     let react_static = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static/plan-react/static");
@@ -672,6 +677,13 @@ async fn network_sessions_overview(State(st): State<PlanHttpState>) -> impl Into
 async fn network_ping_table(State(st): State<PlanHttpState>) -> impl IntoResponse {
     match patch_core::ping_table_v1(&st.pool, &st.network_id, None).await {
         Ok(rows) => Json(serde_json::json!({ "ping_table": rows })).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn network_retention(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    match retention_v1(&st.pool, &st.network_id, None, 500).await {
+        Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
