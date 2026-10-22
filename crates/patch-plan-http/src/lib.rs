@@ -14,7 +14,8 @@ use axum::{
     Json, Router,
 };
 use patch_core::{
-    execute_plan_query, execute_readonly_sql, extension_data_v1, ingest_signed_export,
+    execute_plan_query, execute_plan_sql_write, execute_readonly_sql, extension_data_v1,
+    ingest_signed_export,
     plan_data_clear_events_since,
     list_command_usages,
     list_join_addresses, list_kills, players_online_at,
@@ -730,6 +731,8 @@ async fn query_by_token(
 #[derive(Deserialize)]
 struct QuerySqlBody {
     sql: String,
+    #[serde(default)]
+    write: bool,
 }
 
 #[derive(Deserialize)]
@@ -762,9 +765,18 @@ async fn query_sql_readonly(
     {
         return (resp.0, resp.1).into_response();
     }
-    match execute_readonly_sql(&st.pool, &body.sql).await {
-        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    if body.write {
+        match execute_plan_sql_write(&st.pool, &body.sql).await {
+            Ok(rows_affected) => {
+                Json(serde_json::json!({ "rows_affected": rows_affected })).into_response()
+            }
+            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        }
+    } else {
+        match execute_readonly_sql(&st.pool, &body.sql).await {
+            Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+        }
     }
 }
 

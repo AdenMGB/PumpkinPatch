@@ -63,6 +63,25 @@ async function onConnect(params: Connection) {
   }
 }
 
+async function applyPoolPromotion() {
+  if (scalePromote.value === null || scalePromote.value < 1) return
+  scaleLoading.value = true
+  message.value = ''
+  try {
+    const promoted = await api.gourdPoolPromote(networkId.value, {
+      count: scalePromote.value,
+    })
+    message.value = promoted.length
+      ? `Promoted Gourd routes: ${promoted.join(', ')}`
+      : 'No hidden-ready routes to promote (hot-wire backends with hidden_ready first).'
+    await refreshPoolScaleHint()
+  } catch (e) {
+    message.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    scaleLoading.value = false
+  }
+}
+
 async function refreshPoolScaleHint() {
   scaleLoading.value = true
   try {
@@ -132,6 +151,15 @@ onMounted(async () => {
         </button>
         <p v-if="scalePromote !== null && !scaleLoading" class="topology-scale-hint">
           Promote up to <strong>{{ scalePromote }}</strong> hidden-ready backend(s) for current CCU.
+          <button
+            v-if="scalePromote > 0"
+            type="button"
+            class="pp-btn pp-btn--primary topology-scale-apply"
+            :disabled="scaleLoading"
+            @click="applyPoolPromotion"
+          >
+            Apply promotion
+          </button>
         </p>
       </div>
       <p v-if="message" class="topology-msg">{{ message }}</p>

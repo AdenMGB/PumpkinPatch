@@ -89,6 +89,7 @@ pub fn run() {
             api::orchestration::analytics_plan_export_static,
             api::orchestration::analytics_harvest_sync,
             api::orchestration::gourd_pool_scale_recommend,
+            api::orchestration::gourd_pool_promote,
             api::plan_http::plan_http_start,
             api::plan_auth::plan_auth_register_start,
             api::plan_auth::plan_web_users_list,

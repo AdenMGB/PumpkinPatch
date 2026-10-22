@@ -529,6 +529,10 @@ export interface GourdPoolScaleRecommendRequest {
   hidden_ready: number
 }
 
+export interface GourdPoolPromoteRequest {
+  count: number
+}
+
 export interface PlanQueryRequest {
   activity_groups: string[]
   join_addresses: string[]

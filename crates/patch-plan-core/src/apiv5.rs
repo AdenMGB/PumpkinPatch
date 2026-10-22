@@ -24,7 +24,11 @@ pub fn plan_capabilities_v1() -> Value {
                 "SERVER_PERIODICAL",
                 "MANUAL"
             ]},
-            "QueryService": { "available": true, "write_enabled": false },
+            "QueryService": { "available": true, "write_enabled": true, "write_tables": [
+                "plan_statistic_totals",
+                "plan_user_statistic_totals",
+                "plan_commandusages"
+            ]},
             "ResolverService": { "available": true }
         }
     })
@@ -40,6 +44,6 @@ mod tests {
         let caps = v["capabilities"].as_array().expect("capabilities array");
         assert!(caps.iter().any(|c| c == "DATA_EXTENSION_VALUES"));
         assert!(caps.iter().any(|c| c == "QUERY_SERVICE_READ"));
-        assert_eq!(v["services"]["QueryService"]["write_enabled"], false);
+        assert_eq!(v["services"]["QueryService"]["write_enabled"], true);
     }
 }

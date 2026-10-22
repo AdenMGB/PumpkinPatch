@@ -104,6 +104,19 @@ impl ProcessSupervisor {
         Ok(())
     }
 
+    /// Promote hidden-ready Gourd backends into the join balancer (plangem.md §3.3).
+    pub async fn promote_gourd_pool(&self, network_id: Uuid, count: u32) -> Result<Vec<String>> {
+        let running = self
+            .running
+            .get(&network_id)
+            .ok_or_else(|| Error::InvalidState("network not running".into()))?;
+        let router = running
+            .gourd_router
+            .as_ref()
+            .ok_or_else(|| Error::InvalidState("network hub is not Gourd".into()))?;
+        Ok(router.promote_hidden_ready(count).await)
+    }
+
     pub async fn start_network(
         &mut self,
         network: &NetworkRecord,

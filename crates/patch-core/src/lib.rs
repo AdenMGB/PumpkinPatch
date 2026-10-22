@@ -82,7 +82,8 @@ pub use plan_graph::plan_graph;
 pub use plan_disk_cache::{read_disk_cache, write_disk_cache, DISK_CACHE_TTL_SECS};
 pub use plan_json_cache::{PlanJsonCache, MEMORY_CACHE_MS, REFRESH_BARRIER_MS, with_plan_cache};
 pub use plan_query::{
-    execute_plan_query, execute_readonly_sql, load_cached_plan_query, plan_filters_catalog,
+    execute_plan_query, execute_plan_sql_write, execute_readonly_sql, load_cached_plan_query,
+    plan_filters_catalog,
     ActivityIndexOnFilter, PlanFilterTypeInfo, PlanFiltersCatalog, PlanQueryCohortView,
     PlanQueryRequest, PlanQueryResult,
 };

@@ -564,6 +564,52 @@ async fn compute_cohort_view(
     })
 }
 
+const QUERY_WRITE_TABLES: &[&str] = &[
+    "plan_statistic_totals",
+    "plan_user_statistic_totals",
+    "plan_commandusages",
+];
+
+/// APIv5 QueryService write path — allowlisted extension/stat tables only.
+pub async fn execute_plan_sql_write(pool: &SqlitePool, sql: &str) -> Result<u64> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidState("empty SQL".into()));
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    if !(upper.starts_with("INSERT")
+        || upper.starts_with("UPDATE")
+        || upper.starts_with("DELETE")
+        || upper.starts_with("REPLACE"))
+    {
+        return Err(Error::InvalidState(
+            "write queries must be INSERT, UPDATE, DELETE, or REPLACE".into(),
+        ));
+    }
+    if trimmed.contains(';') {
+        return Err(Error::InvalidState("multiple SQL statements are not permitted".into()));
+    }
+    for forbidden in ["DROP ", "ATTACH ", "ALTER ", "CREATE ", "PRAGMA ", "VACUUM", "TRUNCATE "] {
+        if upper.contains(forbidden) {
+            return Err(Error::InvalidState(format!(
+                "forbidden keyword in write query: {}",
+                forbidden.trim()
+            )));
+        }
+    }
+    if !QUERY_WRITE_TABLES
+        .iter()
+        .any(|table| trimmed.to_ascii_lowercase().contains(table))
+    {
+        return Err(Error::InvalidState(
+            "write query must target plan_statistic_totals, plan_user_statistic_totals, or plan_commandusages"
+                .into(),
+        ));
+    }
+    let result = sqlx::query(trimmed).execute(pool).await?;
+    Ok(result.rows_affected())
+}
+
 /// APIv5 QueryService read path — single `SELECT` only (no writes).
 pub async fn execute_readonly_sql(pool: &SqlitePool, sql: &str) -> Result<Vec<serde_json::Value>> {
     let trimmed = sql.trim();
@@ -960,5 +1006,27 @@ mod tests {
         assert_eq!(rows[0].get("id").and_then(|v| v.as_i64()), Some(2));
         assert!(execute_readonly_sql(&pool, "DELETE FROM demo").await.is_err());
         assert!(execute_readonly_sql(&pool, "SELECT 1; SELECT 2").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_sql_allowlists_extension_tables() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory sqlite");
+        crate::plan_store::ensure_plan_schema(&pool).await.expect("schema");
+        sqlx::query("INSERT INTO plan_servers (uuid, network_id, name) VALUES ('s', 'n', 'S')")
+            .execute(&pool)
+            .await
+            .expect("server");
+        let affected = execute_plan_sql_write(
+            &pool,
+            "INSERT INTO plan_statistic_totals (server_id, statistic_id, value) VALUES (1, 'demo', 3)",
+        )
+        .await
+        .expect("insert");
+        assert_eq!(affected, 1);
+        assert!(execute_plan_sql_write(&pool, "DELETE FROM plan_users").await.is_err());
     }
 }

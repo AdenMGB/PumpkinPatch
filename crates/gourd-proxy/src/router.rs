@@ -114,6 +114,28 @@ impl GourdRouter {
             .map(|r| r.state)
     }
 
+    /// Promotes up to `limit` `hidden_ready` backends to `active` (plangem.md §3.3).
+    pub async fn promote_hidden_ready(&self, limit: u32) -> Vec<String> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut routes = self.routes.write().await;
+        let mut hidden: Vec<String> = routes
+            .iter()
+            .filter(|(_, r)| r.state == BackendPoolState::StandbyHiddenReady)
+            .map(|(alias, _)| alias.clone())
+            .collect();
+        hidden.sort();
+        let mut promoted = Vec::new();
+        for alias in hidden.into_iter().take(limit as usize) {
+            if let Some(route) = routes.get_mut(&alias) {
+                route.state = BackendPoolState::Active;
+                promoted.push(alias);
+            }
+        }
+        promoted
+    }
+
     pub async fn register_forced_host(&self, host: &str, velocity_alias: &str) {
         self.forced_hosts
             .write()
@@ -212,5 +234,22 @@ mod tests {
         assert_eq!(predictive_scale_recommendation(95, 2, 40, 1), 1);
         assert_eq!(predictive_scale_recommendation(50, 2, 40, 3), 0);
         assert_eq!(predictive_scale_recommendation(200, 1, 40, 2), 2);
+    }
+
+    #[tokio::test]
+    async fn promote_hidden_ready_activates_spares() {
+        let lobby: SocketAddr = "127.0.0.1:25566".parse().unwrap();
+        let spare: SocketAddr = "127.0.0.1:25568".parse().unwrap();
+        let router = GourdRouter::new("secret".into(), lobby);
+        router
+            .register_route_with_state("lobby-spare", spare, BackendPoolState::StandbyHiddenReady)
+            .await;
+        let promoted = router.promote_hidden_ready(1).await;
+        assert_eq!(promoted, vec!["lobby-spare"]);
+        assert_eq!(
+            router.backend_state("lobby-spare").await,
+            Some(BackendPoolState::Active)
+        );
+        assert_eq!(router.resolve_backend_for_join("lobby-spare", true).await, spare);
     }
 }

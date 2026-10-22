@@ -251,6 +251,8 @@ export function usePatchApi() {
       invoke<string>('network_hot_wire_server_to_proxy', { networkId, spec }),
     gourdPoolScaleRecommend: (req: import('~/types/patch').GourdPoolScaleRecommendRequest) =>
       invoke<number>('gourd_pool_scale_recommend', { req }),
+    gourdPoolPromote: (networkId: string, req: import('~/types/patch').GourdPoolPromoteRequest) =>
+      invoke<string[]>('gourd_pool_promote', { networkId, req }),
     planHttpStart: (networkId: string) =>
       invoke<string>('plan_http_start', { networkId }),
     planAuthRegisterStart: (networkId: string, username: string, password: string) =>

@@ -26,6 +26,25 @@ pub fn gourd_pool_scale_recommend(req: GourdPoolScaleRecommendRequest) -> u32 {
     )
 }
 
+#[derive(Deserialize)]
+pub struct GourdPoolPromoteRequest {
+    pub count: u32,
+}
+
+#[tauri::command]
+pub async fn gourd_pool_promote(
+    state: tauri::State<'_, AppStateHandle>,
+    network_id: Uuid,
+    req: GourdPoolPromoteRequest,
+) -> Result<Vec<String>> {
+    let inner = state.get().await?;
+    let processes = inner.processes.read().await;
+    processes
+        .promote_gourd_pool(network_id, req.count)
+        .await
+        .map_err(Into::into)
+}
+
 #[tauri::command]
 pub async fn network_topology_get(
     state: tauri::State<'_, AppStateHandle>,

@@ -289,14 +289,82 @@ async fn activity_pie(
 ) -> Result<Value> {
     let players = crate::plan_store::list_players_table(pool, network_id, server_uuid, 500).await?;
     let mut groups: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    for p in players {
+    for p in &players {
         *groups.entry(p.activity_group.clone()).or_insert(0) += 1;
     }
-    let series = groups
-        .into_iter()
+    let pie_series = groups
+        .iter()
         .map(|(name, count)| json!({ "name": name, "y": count }))
         .collect::<Vec<_>>();
-    Ok(json!({ "activity_pie_series": series }))
+
+    const DAY_MS: i64 = 86_400_000;
+    let since = Utc::now().timestamp_millis() - 30 * DAY_MS;
+    let rows = if let Some(uuid) = server_uuid {
+        sqlx::query(
+            "SELECT (sess.session_start / ?) * ? AS day, u.uuid
+             FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND s.uuid = ? AND sess.session_start >= ?",
+        )
+        .bind(DAY_MS)
+        .bind(DAY_MS)
+        .bind(network_id)
+        .bind(uuid)
+        .bind(since)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query(
+            "SELECT (sess.session_start / ?) * ? AS day, u.uuid
+             FROM plan_sessions sess
+             JOIN plan_users u ON u.id = sess.user_id
+             JOIN plan_servers s ON s.id = sess.server_id
+             WHERE s.network_id = ? AND sess.session_start >= ?",
+        )
+        .bind(DAY_MS)
+        .bind(DAY_MS)
+        .bind(network_id)
+        .bind(since)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let group_by_uuid: std::collections::HashMap<String, String> = players
+        .iter()
+        .map(|p| (p.uuid.clone(), p.activity_group.clone()))
+        .collect();
+    let mut daily: std::collections::HashMap<String, std::collections::HashMap<i64, u32>> =
+        std::collections::HashMap::new();
+    for row in rows {
+        let day: i64 = row.get("day");
+        let uuid: String = row.get("uuid");
+        let group = group_by_uuid
+            .get(&uuid)
+            .cloned()
+            .unwrap_or_else(|| "Inactive".into());
+        daily
+            .entry(group)
+            .or_default()
+            .entry(day)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+    }
+    let activity_series: serde_json::Map<String, Value> = daily
+        .into_iter()
+        .map(|(group, days)| {
+            let points = days
+                .into_iter()
+                .map(|(day, count)| json!([day, count]))
+                .collect::<Vec<_>>();
+            (group, json!(points))
+        })
+        .collect();
+
+    Ok(json!({
+        "activity_pie_series": pie_series,
+        "activity_series": activity_series,
+    }))
 }
 
 async fn cpu_ram_series(
