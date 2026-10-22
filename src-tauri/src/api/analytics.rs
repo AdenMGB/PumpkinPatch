@@ -4,7 +4,7 @@ use crate::state::AppStateHandle;
 use patch_core::{
     graph_players_online, list_command_usages, list_join_addresses,
     list_kills, list_players_table, list_sessions, network_overview_v1, ping_table_v1, plan_graph,
-    aggregate_network_analytics, execute_plan_query, extension_data_v1, load_cached_plan_query,
+    aggregate_network_analytics, execute_plan_query, extension_data_merged, load_cached_plan_query,
     online_overview_v1, with_plan_cache, PlanJsonCache,
     performance_overview_v1,
     plan_filters_catalog, player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1,
@@ -685,9 +685,10 @@ pub async fn analytics_plan_network_ping_table(
 
 #[tauri::command]
 pub async fn analytics_plan_extension_data(
-    _state: tauri::State<'_, AppStateHandle>,
-    _network_id: Uuid,
+    state: tauri::State<'_, AppStateHandle>,
+    network_id: Uuid,
     _server_id: Option<Uuid>,
 ) -> Result<PlanExtensionDataV1> {
-    Ok(extension_data_v1())
+    let inner = state.get().await?;
+    extension_data_merged(inner.db.pool(), &network_id.to_string()).await.map_err(Into::into)
 }

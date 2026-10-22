@@ -16,7 +16,7 @@ use axum::{
     Json, Router,
 };
 use patch_core::{
-    execute_plan_query, execute_plan_sql_write, execute_readonly_sql, extension_data_v1,
+    execute_plan_query, execute_plan_sql_write, execute_readonly_sql, extension_data_merged,
     ingest_signed_export,
     plan_data_clear_events_since, sync_all_servers_extensions,
     list_command_usages,
@@ -592,8 +592,11 @@ async fn retention(
     }
 }
 
-async fn extension_data(State(_st): State<PlanHttpState>) -> impl IntoResponse {
-    Json(extension_data_v1())
+async fn extension_data(State(st): State<PlanHttpState>) -> impl IntoResponse {
+    match extension_data_merged(&st.pool, &st.network_id).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn extensions_sync(

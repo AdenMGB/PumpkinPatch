@@ -1,9 +1,12 @@
 //! Plan `/v1/extensionData` envelope + in-process DataExtension registry (indepth.md §8).
 
+use crate::error::Result;
 use crate::plan_store::PlanPlayerTableRow;
 use patch_plan_core::{ExtensionIcon, ExtensionValue, PlanDataExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sqlx::SqlitePool;
+use std::collections::HashMap;
 use std::sync::{OnceLock, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -118,6 +121,30 @@ pub fn extension_data_v1() -> PlanExtensionDataV1 {
             }
         })
         .collect();
+    PlanExtensionDataV1 { extensions }
+}
+
+/// Merges in-process registry plugins with SQLite-backed extension metadata (SQL wins per plugin).
+pub async fn extension_data_merged(pool: &SqlitePool, network_id: &str) -> Result<PlanExtensionDataV1> {
+    let memory = extension_data_v1();
+    let sql = crate::plan_extension_sql::extension_data_v1_from_sql(pool, network_id).await?;
+    Ok(merge_extension_data(memory, sql))
+}
+
+fn merge_extension_data(memory: PlanExtensionDataV1, sql: PlanExtensionDataV1) -> PlanExtensionDataV1 {
+    if sql.extensions.is_empty() {
+        return memory;
+    }
+    let mut by_name: HashMap<String, PlanExtensionPlugin> = memory
+        .extensions
+        .into_iter()
+        .map(|p| (p.plugin_name.clone(), p))
+        .collect();
+    for plugin in sql.extensions {
+        by_name.insert(plugin.plugin_name.clone(), plugin);
+    }
+    let mut extensions: Vec<PlanExtensionPlugin> = by_name.into_values().collect();
+    extensions.sort_by(|a, b| a.plugin_name.cmp(&b.plugin_name));
     PlanExtensionDataV1 { extensions }
 }
 

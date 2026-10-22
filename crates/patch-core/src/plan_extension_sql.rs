@@ -1,7 +1,10 @@
 //! Plan DataExtension SQL persistence (indepth.md §4 extension tables subset).
 
 use crate::error::Result;
-use crate::plan_extension::for_each_extension;
+use crate::plan_extension::{
+    for_each_extension, PlanExtensionDataV1, PlanExtensionPlugin, PlanExtensionTab,
+    PlanExtensionTable, PlanExtensionValue,
+};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -74,6 +77,25 @@ CREATE TABLE IF NOT EXISTS plan_extension_tabs (
     element_order INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (plugin_id) REFERENCES plan_extension_plugins(id) ON DELETE CASCADE,
     UNIQUE (plugin_id, tab_name)
+);
+
+CREATE TABLE IF NOT EXISTS plan_extension_tables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plugin_id INTEGER NOT NULL,
+    tab_id INTEGER,
+    name TEXT NOT NULL,
+    columns_json TEXT NOT NULL DEFAULT '[]',
+    table_color TEXT,
+    FOREIGN KEY (plugin_id) REFERENCES plan_extension_plugins(id) ON DELETE CASCADE,
+    FOREIGN KEY (tab_id) REFERENCES plan_extension_tabs(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS plan_extension_table_rows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_id INTEGER NOT NULL,
+    row_order INTEGER NOT NULL DEFAULT 0,
+    row_json TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (table_id) REFERENCES plan_extension_tables(id) ON DELETE CASCADE
 );
 ";
 
@@ -400,6 +422,139 @@ pub async fn extension_values_by_uuid(
         .collect())
 }
 
+/// Builds `/v1/extensionData` from SQLite (empty when no plugins are stored).
+pub async fn extension_data_v1_from_sql(
+    pool: &SqlitePool,
+    network_id: &str,
+) -> Result<PlanExtensionDataV1> {
+    let plugins = sqlx::query(
+        "SELECT id, plugin_name, icon FROM plan_extension_plugins WHERE network_id = ? ORDER BY plugin_name",
+    )
+    .bind(network_id)
+    .fetch_all(pool)
+    .await?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut extensions = Vec::new();
+    for prow in plugins {
+        let plugin_id: i64 = prow.get("id");
+        let plugin_name: String = prow.get("plugin_name");
+        let icon: String = prow.get("icon");
+
+        let tab_rows = sqlx::query(
+            "SELECT id, tab_name FROM plan_extension_tabs WHERE plugin_id = ? ORDER BY element_order, tab_name",
+        )
+        .bind(plugin_id)
+        .fetch_all(pool)
+        .await?;
+
+        let value_rows = sqlx::query(
+            "SELECT p.provider_name,
+                    sv.boolean_value, sv.double_value, sv.string_value
+             FROM plan_extension_providers p
+             JOIN plan_extension_server_values sv ON sv.provider_id = p.id
+             JOIN plan_servers s ON s.id = sv.server_id
+             WHERE p.plugin_id = ? AND s.network_id = ?
+             ORDER BY p.provider_name, sv.server_id DESC",
+        )
+        .bind(plugin_id)
+        .bind(network_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut seen = std::collections::HashSet::new();
+        let server_values: Vec<PlanExtensionValue> = value_rows
+            .iter()
+            .filter_map(|r| {
+                let name: String = r.get("provider_name");
+                if !seen.insert(name.clone()) {
+                    return None;
+                }
+                let value = decode_extension_cell(
+                    r.get("boolean_value"),
+                    r.get("double_value"),
+                    r.get("string_value"),
+                    None,
+                );
+                Some(PlanExtensionValue { name, value })
+            })
+            .collect();
+
+        let mut tabs: Vec<PlanExtensionTab> = Vec::new();
+        for trow in tab_rows {
+            let tab_id: i64 = trow.get("id");
+            let tab_name: String = trow.get("tab_name");
+            let tables = load_extension_tables_for_tab(pool, plugin_id, tab_id).await?;
+            let overview = tab_name == "Overview";
+            tabs.push(PlanExtensionTab {
+                tab_name,
+                values: if overview {
+                    server_values.clone()
+                } else {
+                    Vec::new()
+                },
+                tables,
+            });
+        }
+        if tabs.is_empty() {
+            tabs.push(PlanExtensionTab {
+                tab_name: "Overview".into(),
+                values: server_values,
+                tables: Vec::new(),
+            });
+        }
+        extensions.push(PlanExtensionPlugin {
+            plugin_name,
+            icon,
+            last_updated: now,
+            tabs,
+        });
+    }
+    Ok(PlanExtensionDataV1 { extensions })
+}
+
+async fn load_extension_tables_for_tab(
+    pool: &SqlitePool,
+    plugin_id: i64,
+    tab_id: i64,
+) -> Result<Vec<PlanExtensionTable>> {
+    let defs = sqlx::query(
+        "SELECT id, name, columns_json FROM plan_extension_tables
+         WHERE plugin_id = ? AND (tab_id = ? OR tab_id IS NULL)
+         ORDER BY name",
+    )
+    .bind(plugin_id)
+    .bind(tab_id)
+    .fetch_all(pool)
+    .await?;
+    let mut out = Vec::new();
+    for def in defs {
+        let table_id: i64 = def.get("id");
+        let name: String = def.get("name");
+        let columns_json: String = def.get("columns_json");
+        let columns: Vec<String> = serde_json::from_str(&columns_json).unwrap_or_default();
+        let row_defs = sqlx::query(
+            "SELECT row_json FROM plan_extension_table_rows
+             WHERE table_id = ? ORDER BY row_order, id",
+        )
+        .bind(table_id)
+        .fetch_all(pool)
+        .await?;
+        let rows: Vec<Vec<Value>> = row_defs
+            .iter()
+            .filter_map(|r| {
+                let raw: String = r.get("row_json");
+                serde_json::from_str(&raw).ok()
+            })
+            .collect();
+        out.push(PlanExtensionTable {
+            name,
+            columns,
+            rows,
+        });
+    }
+    Ok(out)
+}
+
 /// Re-sync all servers in a network (APIv5 `MANUAL_EXTENSION_REFRESH`).
 pub async fn sync_all_servers_extensions(pool: &SqlitePool, network_id: &str) -> Result<u32> {
     let servers: Vec<(i64,)> = sqlx::query_as(
@@ -472,5 +627,37 @@ mod tests {
         .await
         .unwrap();
         assert!(count >= 1);
+    }
+
+    #[tokio::test]
+    async fn extension_data_round_trip_from_sql() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        crate::plan_store::ensure_plan_schema(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO plan_servers (uuid, network_id, name) VALUES ('srv', 'net', 'S')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let server_id: i64 = sqlx::query_scalar("SELECT id FROM plan_servers LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        sync_registered_extensions_to_sql(&pool, "net", server_id)
+            .await
+            .unwrap();
+        let data = extension_data_v1_from_sql(&pool, "net").await.unwrap();
+        assert!(
+            data.extensions
+                .iter()
+                .any(|p| p.plugin_name == "HarvestMetrics"),
+            "expected HarvestMetrics plugin in extensionData"
+        );
+        let merged =
+            crate::plan_extension::extension_data_merged(&pool, "net").await.unwrap();
+        assert!(!merged.extensions.is_empty());
     }
 }

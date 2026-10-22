@@ -571,6 +571,8 @@ const QUERY_WRITE_TABLES: &[&str] = &[
     "plan_extension_user_values",
     "plan_extension_server_values",
     "plan_extension_groups",
+    "plan_extension_tables",
+    "plan_extension_table_rows",
 ];
 
 /// APIv5 QueryService write path — allowlisted extension/stat tables only.

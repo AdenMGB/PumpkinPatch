@@ -92,11 +92,12 @@ pub use plan_data_clear::{
     plan_data_clear_events_since, record_plan_player_data_cleared, PlanDataClearEvent,
 };
 pub use plan_extension_sql::{
-    extension_columns_for_table, extension_values_by_uuid, sync_all_servers_extensions,
-    sync_registered_extensions_to_sql,
+    extension_columns_for_table, extension_data_v1_from_sql, extension_values_by_uuid,
+    sync_all_servers_extensions, sync_registered_extensions_to_sql,
 };
 pub use plan_extension::{
-    ensure_builtin_extensions, extension_data_v1, for_each_extension, register_plan_extension,
+    ensure_builtin_extensions, extension_data_merged, extension_data_v1, for_each_extension,
+    register_plan_extension,
     PlanExtensionDataV1,
     PlanExtensionPlugin, PlanExtensionTab, ExtensionQueryProvider, PluginBooleanGroupFilter,
     PluginNumberFilter,
