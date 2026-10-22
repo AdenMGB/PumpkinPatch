@@ -12,9 +12,24 @@ pub struct PackManifest {
     pub files: BTreeMap<String, String>,
 }
 
-pub fn fingerprint_dir(_root: &Path) -> String {
-    let hash = Sha256::digest(b"patchwork-placeholder");
-    format!("sha256:{:x}", hash)
+pub fn fingerprint_dir(root: &Path) -> String {
+    match index_pack_assets(root) {
+        Ok(files) => {
+            let mut payload = String::new();
+            for (path, digest) in files {
+                payload.push_str(&path);
+                payload.push(':');
+                payload.push_str(&digest);
+                payload.push('\n');
+            }
+            let hash = Sha256::digest(payload.as_bytes());
+            format!("sha256:{:x}", hash)
+        }
+        Err(_) => {
+            let hash = Sha256::digest(b"patchwork-empty");
+            format!("sha256:{:x}", hash)
+        }
+    }
 }
 
 /// Read `pack.mcmeta` from a resource-pack root (plangem.md PatchWork phase-4 scaffold).
@@ -76,6 +91,31 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn materialize_overlay_wins() {
+        let base = std::env::temp_dir().join("patchwork-base");
+        let overlay = std::env::temp_dir().join("patchwork-overlay");
+        let out = std::env::temp_dir().join("patchwork-out");
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&overlay);
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(base.join("assets")).unwrap();
+        std::fs::write(base.join("pack.mcmeta"), r#"{"pack":{"pack_format":34,"description":"b"}}"#)
+            .unwrap();
+        std::fs::write(base.join("assets/a.txt"), b"base").unwrap();
+        std::fs::create_dir_all(overlay.join("assets")).unwrap();
+        std::fs::write(
+            overlay.join("pack.mcmeta"),
+            r#"{"pack":{"pack_format":34,"description":"o"}}"#,
+        )
+        .unwrap();
+        std::fs::write(overlay.join("assets/a.txt"), b"overlay").unwrap();
+        let manifest = materialize_merged_pack(&base, &overlay, &out).unwrap();
+        assert_eq!(manifest.description, "o");
+        let body = std::fs::read_to_string(out.join("assets/a.txt")).unwrap();
+        assert_eq!(body, "overlay");
+    }
+
+    #[test]
     fn indexes_pack_files() {
         let dir = std::env::temp_dir().join("patchwork-index-test");
         let _ = std::fs::remove_dir_all(&dir);
@@ -100,4 +140,39 @@ pub fn merge_manifests(base: PackManifest, overlay: PackManifest) -> PackManifes
         description: overlay.description,
         files,
     }
+}
+
+fn copy_pack_tree(from: &Path, to: &Path) -> Result<(), String> {
+    for entry in std::fs::read_dir(from).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        let dest = to.join(entry.file_name());
+        if path.is_dir() {
+            std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
+            copy_pack_tree(&path, &dest)?;
+        } else {
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            std::fs::copy(&path, &dest).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Copy base pack then overlay (wins on conflicts) into `out` (plangem.md PatchWork flows).
+pub fn materialize_merged_pack(
+    base: &Path,
+    overlay: &Path,
+    out: &Path,
+) -> Result<PackManifest, String> {
+    if out.exists() {
+        std::fs::remove_dir_all(out).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    copy_pack_tree(base, out)?;
+    copy_pack_tree(overlay, out)?;
+    let mut merged = read_pack_manifest(out)?;
+    merged.files = index_pack_assets(out)?;
+    Ok(merged)
 }

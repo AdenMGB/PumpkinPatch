@@ -104,6 +104,11 @@ pub async fn export_plan_network_static_sync(
     )?;
     write_root("theme-default.json", plan_theme_json("default"))?;
     export_plan_react_network_data(pool, network_id, export_dir).await?;
+    write_react_data(
+        export_dir,
+        "network-overview.json",
+        json!(network_overview_v1(pool, network_id, network_servers).await?),
+    )?;
     for (uuid, online) in server_online {
         export_plan_react_server_data(pool, network_id, uuid, export_dir, *online).await?;
         export_plan_react_graph_data(pool, network_id, export_dir, Some(uuid)).await?;
@@ -156,6 +161,7 @@ const REACT_GRAPH_TYPES: &[(&str, &str)] = &[
     ("geolocation", "graph-geolocation"),
     ("optimizedPerformance", "graph-optimizedPerformance"),
     ("aggregatedPing", "graph-aggregatedPing"),
+    ("joinAddressByDay", "graph-joinAddressByDay"),
 ];
 
 /// Graph JSON files consumed by Plan React static mode (`/data/graph-*.json`).

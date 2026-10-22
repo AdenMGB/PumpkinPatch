@@ -1,7 +1,9 @@
 use super::Result;
 use crow_swarm::{SwarmPlan, SwarmReport};
 use patch_cas::CasStore;
-use patchwork::{index_pack_assets, merge_manifests, read_pack_manifest, PackManifest};
+use patchwork::{
+    index_pack_assets, materialize_merged_pack, merge_manifests, read_pack_manifest, PackManifest,
+};
 use patch_audit::AuditLedger;
 use serde::Serialize;
 
@@ -30,6 +32,19 @@ pub async fn audit_ledger_append(
         .append(&actor, &action, &detail)
         .map_err(|e| patch_core::Error::Other(e.to_string()))?;
     Ok(entry.entry_hash)
+}
+
+#[tauri::command]
+pub async fn patchwork_materialize_merged_pack(
+    base_dir: String,
+    overlay_dir: String,
+    output_dir: String,
+) -> Result<PackManifest> {
+    Ok(materialize_merged_pack(
+        std::path::Path::new(&base_dir),
+        std::path::Path::new(&overlay_dir),
+        std::path::Path::new(&output_dir),
+    )?)
 }
 
 #[tauri::command]

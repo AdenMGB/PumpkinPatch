@@ -110,6 +110,7 @@ pub fn run() {
             api::platform::patch_cas_put_bytes,
             api::platform::patch_cas_materialize_blueprint,
             api::platform::patchwork_merge_pack_dirs,
+            api::platform::patchwork_materialize_merged_pack,
             api::voice::tendril_voice_start,
             api::voice::tendril_voice_stats,
             api::telemetry::subscribe_live_telemetry,
