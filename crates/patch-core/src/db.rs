@@ -227,6 +227,7 @@ impl Database {
                 }
                 "harvest_duckdb_enabled" => settings.harvest_duckdb_enabled = value == "true",
                 "gourd_enabled" => settings.gourd_enabled = value == "true",
+                "plan_geolite_eula" => settings.plan_geolite_eula = value == "true",
                 _ => {}
             }
         }
@@ -293,6 +294,14 @@ impl Database {
             (
                 "gourd_enabled",
                 if settings.gourd_enabled {
+                    "true".into()
+                } else {
+                    "false".into()
+                },
+            ),
+            (
+                "plan_geolite_eula",
+                if settings.plan_geolite_eula {
                     "true".into()
                 } else {
                     "false".into()

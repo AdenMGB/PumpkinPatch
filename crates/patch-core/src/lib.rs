@@ -18,6 +18,7 @@ mod plan_extension;
 mod plan_data_clear;
 mod plan_extension_sql;
 mod plan_export;
+mod plan_geolite;
 mod plan_theme;
 mod orchestration;
 mod harvest_sync;
@@ -116,6 +117,7 @@ pub use plan_web_groups::{
     save_permissions_for_group,
 };
 pub use plan_export::{default_export_dir, export_plan_static_bundle, plan_tls_pem_paths};
+pub use plan_geolite::{configure_network_geolocation, geolite_cache_path};
 pub use plan_theme::{plan_theme_json, plan_theme_json_db, save_plan_theme_json};
 pub use orchestration::{
     build_topology, hot_wire_velocity_toml, NetworkTopology, TopologyEdge, TopologyNode,

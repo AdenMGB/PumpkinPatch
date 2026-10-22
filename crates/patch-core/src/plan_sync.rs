@@ -16,6 +16,12 @@ pub async fn sync_network_plan_exports(
     let backups_dir = Path::new(&network.data_path).join("plan-backups");
     let pool = db.pool();
     crate::plan_store::ensure_plan_schema(pool).await?;
+    let settings = db.get_settings().await?;
+    let _ = crate::plan_geolite::configure_network_geolocation(
+        Path::new(&network.data_path),
+        settings.plan_geolite_eula,
+    )
+    .await;
 
     let max_age = 900;
     let mut reports = Vec::new();

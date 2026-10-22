@@ -14,7 +14,7 @@ pub use activity_index::{
     DEFAULT_PLAYTIME_THRESHOLD_MS, ONE_WEEK_MS,
 };
 pub use data_extension::{ExtensionIcon, ExtensionValue, PlanDataExtension};
-pub use geolocation::geolocation_from_ip;
+pub use geolocation::{geolocation_from_ip, set_geolite_mmdb_path};
 pub use join_address::{normalize_join_address, JoinAddressOptions};
 pub use placeholders::{PlanPlaceholderContext, resolve_placeholder};
 pub use session::{

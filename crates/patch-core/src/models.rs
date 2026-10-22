@@ -142,6 +142,9 @@ pub struct AppSettings {
     pub harvest_duckdb_enabled: bool,
     #[serde(default)]
     pub gourd_enabled: bool,
+    /// When true, download/cache GeoLite2-Country for Plan geolocation (indepth §2.4).
+    #[serde(default = "default_true")]
+    pub plan_geolite_eula: bool,
 }
 
 fn default_true() -> bool {
@@ -162,6 +165,7 @@ impl Default for AppSettings {
             plan_http_port: 8804,
             harvest_duckdb_enabled: true,
             gourd_enabled: false,
+            plan_geolite_eula: true,
         }
     }
 }
