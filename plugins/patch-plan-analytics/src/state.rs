@@ -806,6 +806,14 @@ pub fn placeholder_context_for(
             .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
             .sum()
     };
+    let afk_in_window = |cutoff: i64| -> u64 {
+        rt.players
+            .values()
+            .flat_map(|p| p.completed_sessions.iter())
+            .filter(|s| s.end_unix >= cutoff)
+            .map(|s| s.afk_secs)
+            .sum()
+    };
 
     let peak_sample = rt
         .activity_samples
@@ -816,13 +824,15 @@ pub fn placeholder_context_for(
         .unwrap_or_else(|| now.to_string());
     let peak_date_alltime = peak_date_recent.clone();
 
-    let tps_spikes_day = {
-        let cutoff = now - 86_400;
+    let tps_spikes_since = |cutoff: i64| -> u32 {
         rt.performance_samples
             .iter()
             .filter(|s| s.t >= cutoff && s.ticks_per_second < 15.0)
             .count() as u32
     };
+    let tps_spikes_day = tps_spikes_since(now - 86_400);
+    let tps_spikes_week = tps_spikes_since(now - 7 * 86_400);
+    let tps_spikes_month = tps_spikes_since(now - 30 * 86_400);
 
     let (sessions_playtime_secs, sessions_afk_secs) = rt.players.values().fold((0u64, 0u64), |acc, p| {
         (
@@ -902,6 +912,16 @@ pub fn placeholder_context_for(
         .take(10)
         .map(|k| (k.victim_name.clone(), k.weapon.clone()))
         .collect();
+
+    let player_session_length_longest_secs = entry
+        .map(|e| {
+            e.completed_sessions
+                .iter()
+                .map(|s| (s.end_unix - s.start_unix).max(0) as u64)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
 
     let (player_ping_avg, player_ping_min, player_ping_max) = entry
         .map(|e| {
@@ -983,14 +1003,30 @@ pub fn placeholder_context_for(
         sessions_playtime_day: playtime_in_window(now - 86_400),
         sessions_playtime_week: playtime_in_window(now - 7 * 86_400),
         sessions_playtime_month: playtime_in_window(now - 30 * 86_400),
+        sessions_active_day: playtime_in_window(now - 86_400)
+            .saturating_sub(afk_in_window(now - 86_400)),
+        sessions_active_week: playtime_in_window(now - 7 * 86_400)
+            .saturating_sub(afk_in_window(now - 7 * 86_400)),
+        sessions_active_month: playtime_in_window(now - 30 * 86_400)
+            .saturating_sub(afk_in_window(now - 30 * 86_400)),
+        sessions_afk_day: afk_in_window(now - 86_400),
+        sessions_afk_week: afk_in_window(now - 7 * 86_400),
+        sessions_afk_month: afk_in_window(now - 30 * 86_400),
         peak_online_date_alltime: peak_date_alltime,
         peak_online_date_recent: peak_date_recent,
         favorite_server: rt.config.server_name.clone(),
         tps_spikes_day,
+        tps_spikes_week,
+        tps_spikes_month,
         sessions_avg_length_day: avg_session_len_since(now - 86_400),
         sessions_avg_length_week: avg_session_len_since(now - 7 * 86_400),
         sessions_avg_length_month: avg_session_len_since(now - 30 * 86_400),
         sessions_avg_unique_players_day: unique_players_since(now - 86_400),
+        sessions_avg_unique_players_week: unique_players_since(now - 7 * 86_400),
+        sessions_avg_unique_players_month: unique_players_since(now - 30 * 86_400),
+        player_is_banned: entry.map(|e| e.banned).unwrap_or(false),
+        player_is_operator: entry.map(|e| e.operator).unwrap_or(false),
+        player_session_length_longest_secs,
         top_playtime: top,
     }
 }

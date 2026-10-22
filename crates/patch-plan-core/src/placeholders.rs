@@ -74,6 +74,19 @@ pub struct PlanPlaceholderContext {
     pub sessions_avg_length_week: u64,
     pub sessions_avg_length_month: u64,
     pub sessions_avg_unique_players_day: u64,
+    pub sessions_active_day: u64,
+    pub sessions_active_week: u64,
+    pub sessions_active_month: u64,
+    pub sessions_afk_day: u64,
+    pub sessions_afk_week: u64,
+    pub sessions_afk_month: u64,
+    pub sessions_avg_unique_players_week: u64,
+    pub sessions_avg_unique_players_month: u64,
+    pub tps_spikes_week: u32,
+    pub tps_spikes_month: u32,
+    pub player_is_banned: bool,
+    pub player_is_operator: bool,
+    pub player_session_length_longest_secs: u64,
     /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders.
     pub top_playtime: Vec<(String, u64, u64)>,
 }
@@ -108,7 +121,15 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_sessions_playtime_day" => Some(format_duration(ctx.sessions_playtime_day)),
         "plan_sessions_playtime_week" => Some(format_duration(ctx.sessions_playtime_week)),
         "plan_sessions_playtime_month" => Some(format_duration(ctx.sessions_playtime_month)),
+        "plan_sessions_active_time_day" => Some(format_duration(ctx.sessions_active_day)),
+        "plan_sessions_active_time_week" => Some(format_duration(ctx.sessions_active_week)),
+        "plan_sessions_active_time_month" => Some(format_duration(ctx.sessions_active_month)),
+        "plan_sessions_afk_time_day" => Some(format_duration(ctx.sessions_afk_day)),
+        "plan_sessions_afk_time_week" => Some(format_duration(ctx.sessions_afk_week)),
+        "plan_sessions_afk_time_month" => Some(format_duration(ctx.sessions_afk_month)),
         "plan_tps_spikes_day" => Some(ctx.tps_spikes_day.to_string()),
+        "plan_tps_spikes_week" => Some(ctx.tps_spikes_week.to_string()),
+        "plan_tps_spikes_month" => Some(ctx.tps_spikes_month.to_string()),
         "plan_player_favorite_server" => Some(ctx.favorite_server.clone()),
         "plan_players_regular" => Some(ctx.players_total.to_string()),
         "plan_players_new_day" => Some(ctx.players_new_day.to_string()),
@@ -129,14 +150,20 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_sessions_average_unique_players_day" => {
             Some(ctx.sessions_avg_unique_players_day.to_string())
         }
+        "plan_sessions_average_unique_players_week" => {
+            Some(ctx.sessions_avg_unique_players_week.to_string())
+        }
+        "plan_sessions_average_unique_players_month" => {
+            Some(ctx.sessions_avg_unique_players_month.to_string())
+        }
         "plan_server_time_zone" => Some(ctx.timezone_offset.clone()),
         "plan_server_time_zone_offset" => Some(ctx.timezone_offset.clone()),
         "plan_player_session_length" => {
             let active = ctx.playtime_secs.saturating_sub(ctx.afk_secs);
             Some(format_duration(active))
         }
-        "plan_player_is_operator" => Some("false".into()),
-        "plan_player_is_banned" => Some("false".into()),
+        "plan_player_is_operator" => Some(ctx.player_is_operator.to_string()),
+        "plan_player_is_banned" => Some(ctx.player_is_banned.to_string()),
         "plan_sessions_count_total" => Some(ctx.total_joins.to_string()),
         "plan_player_time_total" => Some(format_duration(ctx.playtime_secs)),
         "plan_player_time_afk_total" => Some(format_duration(ctx.afk_secs)),
@@ -179,6 +206,9 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
             let n = ctx.session_triples.len().max(1) as u64;
             let total = ctx.playtime_secs;
             Some(format_duration(total / n))
+        }
+        "plan_player_session_length_Longest" => {
+            Some(format_duration(ctx.player_session_length_longest_secs))
         }
         "plan_player_player_caused_deaths" => Some(ctx.player_kills.to_string()),
         _ => None,
@@ -360,6 +390,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_players_new_day%", &ctx).as_deref(),
             Some("3")
+        );
+    }
+
+    #[test]
+    fn resolves_player_banned_flag() {
+        let ctx = PlanPlaceholderContext {
+            player_is_banned: true,
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_player_is_banned%", &ctx).as_deref(),
+            Some("true")
         );
     }
 

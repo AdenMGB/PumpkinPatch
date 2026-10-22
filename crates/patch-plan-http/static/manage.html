@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Plan — Manage access</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 36rem; margin: 2rem auto; padding: 0 1rem; background: #0f172a; color: #e2e8f0; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th, td { text-align: left; padding: 0.4rem; border-bottom: 1px solid #334155; }
+    th { color: #94a3b8; }
+    a { color: #f97316; }
+    #msg { color: #94a3b8; margin-top: 0.75rem; }
+  </style>
+</head>
+<body>
+  <h1>Manage web access</h1>
+  <p>Requires admin session (<code>manage.groups</code>). Full RBAC matrix editing ships in Pumpkin Patch Analytics; this page lists synced users.</p>
+  <p id="msg">Loading…</p>
+  <table id="users" hidden>
+    <thead><tr><th>User</th><th>Group</th><th>Linked UUID</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p><a href="/app">Dashboard</a> · <a href="/theme-editor">Theme editor</a></p>
+  <script>
+    fetch('/v1/auth/users').then(async (r) => {
+      const msg = document.getElementById('msg');
+      if (!r.ok) {
+        msg.textContent = 'Unauthorized — log in via /register then /v1/auth/login (session cookie).';
+        return;
+      }
+      const j = await r.json();
+      const users = j.users || [];
+      msg.textContent = users.length + ' web user(s)';
+      const tbody = document.querySelector('#users tbody');
+      tbody.innerHTML = users.map((u) =>
+        `<tr><td>${u.username || ''}</td><td>${u.group_name || ''}</td><td>${u.linked_to_uuid || '—'}</td></tr>`
+      ).join('');
+      document.getElementById('users').hidden = false;
+    }).catch((e) => { document.getElementById('msg').textContent = String(e); });
+  </script>
+</body>
+</html>

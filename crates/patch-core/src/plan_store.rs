@@ -135,6 +135,12 @@ CREATE TABLE IF NOT EXISTS plan_query_cache (
 
 CREATE INDEX IF NOT EXISTS plan_query_cache_expires ON plan_query_cache(expires_at_ms);
 
+CREATE TABLE IF NOT EXISTS plan_custom_themes (
+    name TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    updated_at_ms BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS plan_kills (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     killer_uuid TEXT NOT NULL,
@@ -523,18 +529,22 @@ async fn upsert_user_info(
     let registered_ms = player.first_seen_unix * 1000;
     let last_seen_ms = player.last_seen_unix * 1000;
     sqlx::query(
-        "INSERT INTO plan_user_info (user_id, server_id, join_address, registered, nick)
-         VALUES (?, ?, ?, ?, ?)
+        "INSERT INTO plan_user_info (user_id, server_id, join_address, registered, nick, opped, banned)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, server_id) DO UPDATE SET
            join_address = excluded.join_address,
            registered = MIN(plan_user_info.registered, excluded.registered),
-           nick = CASE WHEN excluded.nick != '' THEN excluded.nick ELSE plan_user_info.nick END",
+           nick = CASE WHEN excluded.nick != '' THEN excluded.nick ELSE plan_user_info.nick END,
+           opped = excluded.opped,
+           banned = excluded.banned",
     )
     .bind(user_id)
     .bind(server_id)
     .bind(&player.join_address)
     .bind(registered_ms)
     .bind(&player.nick)
+    .bind(if player.operator { 1 } else { 0 })
+    .bind(if player.banned { 1 } else { 0 })
     .execute(pool)
     .await?;
     let display_nick = if player.nick.is_empty() {
@@ -1087,6 +1097,10 @@ pub struct PlanPlayerTableRow {
     pub ping_max: u32,
     pub nick: String,
     pub kick_count: u64,
+    #[serde(default)]
+    pub banned: bool,
+    #[serde(default)]
+    pub operator: bool,
 }
 
 pub async fn list_players_table(
@@ -1098,6 +1112,7 @@ pub async fn list_players_table(
     let rows = if let Some(uuid) = server_uuid {
         sqlx::query(
             "SELECT u.name, u.uuid, u.registered, u.times_kicked, ui.join_address, ui.nick,
+                    ui.banned, ui.opped,
                     (SELECT MAX(session_end) FROM plan_sessions WHERE user_id = u.id) AS last_seen,
                     (SELECT COUNT(*) FROM plan_sessions WHERE user_id = u.id AND server_id = s.id) AS sessions
              FROM plan_users u
@@ -1116,6 +1131,7 @@ pub async fn list_players_table(
         sqlx::query(
             "SELECT u.name, u.uuid, u.registered, MAX(u.times_kicked) AS times_kicked,
                     MAX(ui.join_address) AS join_address, MAX(ui.nick) AS nick,
+                    MAX(ui.banned) AS banned, MAX(ui.opped) AS opped,
                     MAX(sess.session_end) AS last_seen,
                     COUNT(sess.id) AS sessions
              FROM plan_users u
@@ -1210,6 +1226,8 @@ pub async fn list_players_table(
             ping_max,
             nick: row.try_get("nick").unwrap_or_default(),
             kick_count: row.try_get::<i64, _>("times_kicked").unwrap_or(0) as u64,
+            banned: row.try_get::<i64, _>("banned").unwrap_or(0) != 0,
+            operator: row.try_get::<i64, _>("opped").unwrap_or(0) != 0,
         });
     }
     Ok(out)

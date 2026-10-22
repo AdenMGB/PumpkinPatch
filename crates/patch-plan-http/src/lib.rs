@@ -16,6 +16,7 @@ use patch_core::{
     player_gdpr_export_json, plan_log_access, plan_web_login, read_disk_cache, start_web_registration,
     write_disk_cache, PlanJsonCache,
     online_overview_v1, performance_overview_v1, plan_filters_catalog, plan_graph, plan_theme_json,
+    plan_theme_json_db, save_plan_theme_json,
     player_profile_v1, player_versus_v1, playerbase_overview_v1, players_table_v1, players_v1,
     retention_v1, server_overview_v1, sessions_overview_v1, sessions_v1, with_plan_cache,
     PlanQueryRequest,
@@ -105,7 +106,8 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/app/", get(plan_embedded_app))
         .route("/register", get(plan_register_page))
         .route("/theme-editor", get(plan_theme_editor_page))
-        .route("/v1/theme", get(theme))
+        .route("/manage", get(plan_manage_page))
+        .route("/v1/theme", get(theme).post(theme_save))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
         .merge(session_protected)
@@ -740,7 +742,49 @@ async fn openapi_docs(
     .into_response()
 }
 
-async fn theme(Query(q): Query<ServerQuery>) -> impl IntoResponse {
+async fn plan_manage_page(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    if auth_layer::authorize_session_permission(&st, &headers, "manage.groups")
+        .await
+        .is_err()
+    {
+        return (StatusCode::UNAUTHORIZED, "manage.groups required").into_response();
+    }
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        include_str!("../static/manage.html"),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct ThemeSaveBody {
+    name: String,
+    theme: serde_json::Value,
+}
+
+async fn theme_save(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+    Json(body): Json<ThemeSaveBody>,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "manage.themes").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
+    match save_plan_theme_json(&st.pool, &body.name, &body.theme).await {
+        Ok(()) => Json(serde_json::json!({ "saved": body.name })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    }
+}
+
+async fn theme(State(st): State<PlanHttpState>, Query(q): Query<ServerQuery>) -> impl IntoResponse {
     let name = q.name.as_deref().unwrap_or("default");
-    Json(plan_theme_json(name))
+    match plan_theme_json_db(&st.pool, name).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }

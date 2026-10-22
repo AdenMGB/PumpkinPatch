@@ -30,12 +30,18 @@
       document.getElementById('json').value = JSON.stringify(j, null, 2);
       msg.textContent = 'Loaded ' + name;
     };
-    document.getElementById('save').onclick = () => {
+    document.getElementById('save').onclick = async () => {
       try {
         const name = document.getElementById('name').value.trim() || 'custom';
-        localStorage.setItem('plan-theme-' + name, document.getElementById('json').value);
-        msg.textContent = 'Saved locally as plan-theme-' + name + ' (server persist via manage.themes coming soon)';
-      } catch (e) { msg.textContent = String(e); }
+        const theme = JSON.parse(document.getElementById('json').value);
+        const r = await fetch('/v1/theme', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, theme }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        msg.textContent = 'Saved theme ' + name + ' on server';
+      } catch (e) { msg.textContent = String(e.message || e); }
     };
     document.getElementById('load').click();
   </script>

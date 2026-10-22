@@ -129,6 +129,8 @@ mod tests {
             ping_max: 0,
             nick: String::new(),
             kick_count: 0,
+            banned: false,
+            operator: false,
         });
         assert_eq!(entry.active_playtime, 99_000);
         assert_eq!(entry.extension_values, json!({}));

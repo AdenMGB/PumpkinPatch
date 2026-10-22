@@ -89,6 +89,10 @@ pub struct PlayerStats {
     pub ping_windows: Vec<PingWindowRecord>,
     #[serde(default)]
     pub completed_sessions: Vec<SessionRecord>,
+    #[serde(default)]
+    pub banned: bool,
+    #[serde(default)]
+    pub operator: bool,
 }
 
 /// One-minute aggregated ping window (§2.4).

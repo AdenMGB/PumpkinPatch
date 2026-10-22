@@ -39,7 +39,10 @@
       <button type="button" data-panel="network">Network</button>
       <button type="button" data-panel="players">Players</button>
       <button type="button" data-panel="graph">Graph</button>
+      <button type="button" data-panel="query">Query</button>
     </nav>
+    <a href="/manage">Manage</a>
+    <a href="/theme-editor">Theme</a>
     <a href="/export/index.html">Static export</a>
   </header>
   <main>
@@ -71,6 +74,39 @@
       <table>
         <thead><tr><th>Name</th><th>Activity</th><th>Playtime</th><th>Last seen</th></tr></thead>
         <tbody id="players-body"></tbody>
+      </table>
+    </section>
+
+    <section id="panel-query" class="panel">
+      <div class="row">
+        <label>Banned filter
+          <select id="q-banned">
+            <option value="">Any</option>
+            <option value="Banned">Banned</option>
+            <option value="Not banned">Not banned</option>
+          </select>
+        </label>
+        <label>Operators
+          <select id="q-operators">
+            <option value="">Any</option>
+            <option value="Operators">Operators</option>
+            <option value="Non-operators">Non-operators</option>
+          </select>
+        </label>
+        <label>Activity group
+          <select id="q-activity" multiple size="4">
+            <option>Very Active</option>
+            <option>Active</option>
+            <option>Inactive</option>
+            <option>Very Inactive</option>
+          </select>
+        </label>
+        <button type="button" class="primary" id="run-query">Run cohort query</button>
+      </div>
+      <p id="query-summary"></p>
+      <table>
+        <thead><tr><th>Name</th><th>Activity</th><th>Banned</th><th>Op</th></tr></thead>
+        <tbody id="query-body"></tbody>
       </table>
     </section>
 
@@ -167,6 +203,27 @@
       ctx.stroke();
     }
 
+    async function refreshQuery() {
+      const server = $('server').value.trim();
+      const body = { activity_groups: [], join_addresses: [], geolocations: [], banned: [], operators: [] };
+      const banned = $('q-banned').value;
+      if (banned) body.banned = [banned];
+      const ops = $('q-operators').value;
+      if (ops) body.operators = [ops];
+      body.activity_groups = Array.from($('q-activity').selectedOptions).map((o) => o.value);
+      const q = server ? '?server=' + encodeURIComponent(server) : '';
+      const d = await fetch('/v1/query' + q, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+      $('query-summary').textContent = `Matched ${d.matched_count ?? 0} — avg activity ${d.avg_activity_index ?? '—'}`;
+      const rows = d.players || [];
+      $('query-body').innerHTML = rows.slice(0, 100).map((p) =>
+        `<tr><td>${p.name || ''}</td><td>${p.activity_group || ''}</td><td>${p.banned ? 'yes' : ''}</td><td>${p.operator ? 'yes' : ''}</td></tr>`
+      ).join('');
+    }
+
     async function refreshGraph() {
       const server = $('server').value.trim();
       const type = $('graph-type').value;
@@ -188,6 +245,7 @@
         if (activePanel === 'network') await refreshNetwork();
         if (activePanel === 'players') await refreshPlayers();
         if (activePanel === 'graph') await refreshGraph();
+        if (activePanel === 'query') await refreshQuery();
         $('log').textContent = 'Updated ' + new Date().toLocaleTimeString();
       } catch (e) {
         $('log').textContent = String(e);
@@ -195,6 +253,7 @@
     }
 
     $('refresh').addEventListener('click', refresh);
+    $('run-query').addEventListener('click', refreshQuery);
     $('graph-type').addEventListener('change', refreshGraph);
     loadServers().then(refresh).catch((e) => { $('log').textContent = String(e); });
   </script>

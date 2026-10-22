@@ -47,6 +47,12 @@ pub struct PlanQueryRequest {
     pub played_before_ms: Option<i64>,
     #[serde(default)]
     pub played_server_uuids: Vec<String>,
+    /// `Banned` / `Not banned` (Plan `/v1/filters`).
+    #[serde(default)]
+    pub banned: Vec<String>,
+    /// `Operators` / `Non-operators`.
+    #[serde(default)]
+    pub operators: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -519,6 +525,24 @@ pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &Plan
     if let Some(before) = request.last_seen_before_ms {
         players.retain(|p| p.last_seen <= before);
     }
+    if request.banned.iter().any(|b| b.eq_ignore_ascii_case("Banned")) {
+        players.retain(|p| p.banned);
+    } else if request
+        .banned
+        .iter()
+        .any(|b| b.eq_ignore_ascii_case("Not banned"))
+    {
+        players.retain(|p| !p.banned);
+    }
+    if request.operators.iter().any(|b| b.eq_ignore_ascii_case("Operators")) {
+        players.retain(|p| p.operator);
+    } else if request
+        .operators
+        .iter()
+        .any(|b| b.eq_ignore_ascii_case("Non-operators"))
+    {
+        players.retain(|p| !p.operator);
+    }
 }
 
 #[cfg(test)]
@@ -542,7 +566,42 @@ mod tests {
             ping_max: 0,
             nick: String::new(),
             kick_count: 0,
+            banned: false,
+            operator: false,
         }
+    }
+
+    #[test]
+    fn filters_by_banned() {
+        let mut players = vec![
+            sample_player("Active", 50.0, "a"),
+            PlanPlayerTableRow {
+                name: "Banned".into(),
+                uuid: "b".into(),
+                activity_index: 10.0,
+                activity_group: "Inactive".into(),
+                active_playtime_ms: 0,
+                sessions: 1,
+                registered: 1,
+                last_seen: 0,
+                join_address: "a".into(),
+                geolocation: String::new(),
+                ping_avg: 0,
+                ping_min: 0,
+                ping_max: 0,
+                nick: String::new(),
+                kick_count: 0,
+                banned: true,
+                operator: false,
+            },
+        ];
+        let req = PlanQueryRequest {
+            banned: vec!["Banned".into()],
+            ..PlanQueryRequest::default()
+        };
+        apply_query_filters(&mut players, &req);
+        assert_eq!(players.len(), 1);
+        assert_eq!(players[0].name, "Banned");
     }
 
     #[test]
@@ -568,6 +627,8 @@ mod tests {
             played_after_ms: None,
             played_before_ms: None,
             played_server_uuids: vec![],
+            banned: vec![],
+            operators: vec![],
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
@@ -594,26 +655,14 @@ mod tests {
                 ping_max: 0,
                 nick: String::new(),
                 kick_count: 0,
+                banned: false,
+                operator: false,
             },
         ];
         players[0].sessions = 1;
         let req = PlanQueryRequest {
-            activity_groups: vec![],
-            join_addresses: vec![],
-            min_activity_index: None,
-            max_activity_index: None,
             min_sessions: Some(3),
-            registered_after_ms: None,
-            registered_before_ms: None,
-            geolocations: vec![],
-            bypass_cache: false,
-            view_after_ms: None,
-            view_before_ms: None,
-            last_seen_after_ms: None,
-            last_seen_before_ms: None,
-            played_after_ms: None,
-            played_before_ms: None,
-            played_server_uuids: vec![],
+            ..PlanQueryRequest::default()
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
@@ -640,26 +689,14 @@ mod tests {
                 ping_max: 0,
                 nick: String::new(),
                 kick_count: 0,
+                banned: false,
+                operator: false,
             },
         ];
         players[0].last_seen = 500;
         let req = PlanQueryRequest {
-            activity_groups: vec![],
-            join_addresses: vec![],
-            min_activity_index: None,
-            max_activity_index: None,
-            min_sessions: None,
-            registered_after_ms: None,
-            registered_before_ms: None,
-            geolocations: vec![],
-            bypass_cache: false,
-            view_after_ms: None,
-            view_before_ms: None,
             last_seen_after_ms: Some(100),
-            last_seen_before_ms: None,
-            played_after_ms: None,
-            played_before_ms: None,
-            played_server_uuids: vec![],
+            ..PlanQueryRequest::default()
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);

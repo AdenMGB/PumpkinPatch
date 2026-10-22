@@ -1,6 +1,39 @@
 //! Plan JSON theme payloads (`GET /v1/theme`, indepth.md §6).
 
+use crate::error::{Error, Result};
 use serde_json::{json, Value};
+use sqlx::{Row, SqlitePool};
+
+pub async fn plan_theme_json_db(pool: &SqlitePool, name: &str) -> Result<Value> {
+    let row = sqlx::query("SELECT json FROM plan_custom_themes WHERE name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    if let Some(row) = row {
+        let raw: String = row.get("json");
+        return serde_json::from_str(&raw).map_err(Error::from);
+    }
+    Ok(plan_theme_json(name))
+}
+
+pub async fn save_plan_theme_json(
+    pool: &SqlitePool,
+    name: &str,
+    theme: &Value,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let json = serde_json::to_string(theme)?;
+    sqlx::query(
+        "INSERT INTO plan_custom_themes (name, json, updated_at_ms) VALUES (?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET json = excluded.json, updated_at_ms = excluded.updated_at_ms",
+    )
+    .bind(name)
+    .bind(json)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
 
 pub fn plan_theme_json(name: &str) -> Value {
     match name {

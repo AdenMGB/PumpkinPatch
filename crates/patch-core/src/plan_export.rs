@@ -1,6 +1,6 @@
 //! Static Plan JSON export (indepth.md §6 Export system).
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::plan_theme::plan_theme_json;
 use crate::{
     list_join_addresses, list_kills, network_overview_v1, online_overview_v1,
@@ -89,6 +89,8 @@ fn write_plan_export_static_assets(export_dir: &Path) -> Result<()> {
     std::fs::write(export_dir.join("app.html"), DASHBOARD)?;
     std::fs::write(export_dir.join("register.html"), REGISTER)?;
     std::fs::write(export_dir.join("theme-editor.html"), THEME)?;
+    const MANAGE: &str = include_str!("../../patch-plan-http/static/manage.html");
+    std::fs::write(export_dir.join("manage.html"), MANAGE)?;
     Ok(())
 }
 
