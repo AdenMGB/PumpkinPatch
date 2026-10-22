@@ -2,6 +2,9 @@
 
 mod forwarding;
 mod router;
+mod scarecrow;
+
+pub use scarecrow::{ScarecrowStats, validate_handshake};
 
 pub use router::{
     BackendPoolState, GourdRouter, parse_pool_state, predictive_scale_recommendation,
@@ -9,7 +12,6 @@ pub use router::{
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -27,6 +29,7 @@ pub struct GourdProxy {
     config: Arc<GourdConfig>,
     router: GourdRouter,
     shutdown: watch::Sender<bool>,
+    pub scarecrow: Arc<ScarecrowStats>,
 }
 
 impl GourdProxy {
@@ -36,6 +39,7 @@ impl GourdProxy {
             config: Arc::new(config),
             router,
             shutdown,
+            scarecrow: Arc::new(ScarecrowStats::default()),
         }
     }
 
@@ -49,8 +53,11 @@ impl GourdProxy {
                     let (stream, peer) = accept?;
                     let cfg = self.config.clone();
                     let router = self.router.clone();
+                    let scarecrow = self.scarecrow.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_client(stream, peer, cfg, router).await {
+                        if let Err(e) =
+                            handle_client(stream, peer, cfg, router, scarecrow).await
+                        {
                             eprintln!("gourd client {peer} ended: {e}");
                         }
                     });
@@ -70,8 +77,20 @@ async fn handle_client(
     peer: SocketAddr,
     config: Arc<GourdConfig>,
     router: GourdRouter,
+    scarecrow: Arc<ScarecrowStats>,
 ) -> Result<(), std::io::Error> {
-    let handshake = protocol::read_handshake(&mut client).await?;
+    let (handshake, packet_len) = protocol::read_handshake(&mut client).await?;
+    if !validate_handshake(
+        handshake.protocol_version,
+        &handshake.server_address,
+        handshake.next_state,
+        32_768,
+        packet_len,
+    ) {
+        scarecrow.record_dropped();
+        return Ok(());
+    }
+    scarecrow.record_allowed();
     if handshake.next_state == 1 {
         protocol::write_status_response(
             &mut client,
@@ -130,7 +149,7 @@ mod protocol {
         pub next_state: u8,
     }
 
-    pub async fn read_handshake(stream: &mut TcpStream) -> Result<Handshake, std::io::Error> {
+    pub async fn read_handshake(stream: &mut TcpStream) -> Result<(Handshake, usize), std::io::Error> {
         let packet_len = read_var_int(stream).await?;
         let mut buf = vec![0u8; packet_len as usize];
         stream.read_exact(&mut buf).await?;
@@ -146,12 +165,15 @@ mod protocol {
         let server_address = read_string_buf(&mut cursor)?;
         let server_port = read_u16_buf(&mut cursor)?;
         let next_state = read_u8_buf(&mut cursor)?;
-        Ok(Handshake {
-            protocol_version,
-            server_address,
-            server_port,
-            next_state,
-        })
+        Ok((
+            Handshake {
+                protocol_version,
+                server_address,
+                server_port,
+                next_state,
+            },
+            packet_len as usize,
+        ))
     }
 
     pub async fn write_handshake_to_backend(
@@ -422,6 +444,7 @@ mod protocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt;
     use tokio::time::{timeout, Duration};
 
     #[tokio::test]
