@@ -48,6 +48,8 @@ pub struct PlanHttpState {
     pub export_secret: String,
     /// When true, `X-Forwarded-For` / `X-Real-IP` populate `plan_access_log.from_ip` (indepth §5.2).
     pub trust_forwarded: bool,
+    /// PEM certificate + private key for HTTPS (indepth §5.2); both must exist on disk.
+    pub tls_pem: Option<(PathBuf, PathBuf)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,9 +247,19 @@ async fn auth_login(
 }
 
 pub async fn serve(bind: SocketAddr, state: PlanHttpState) -> Result<(), std::io::Error> {
+    let tls_pem = state.tls_pem.clone();
     let app = router(state).layer(tower_http::cors::CorsLayer::permissive());
-    let listener = tokio::net::TcpListener::bind(bind).await?;
-    axum::serve(listener, app).await?;
+    if let Some((cert, key)) = tls_pem {
+        let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
+            .await
+            .map_err(std::io::Error::other)?;
+        axum_server::bind_rustls(bind, tls)
+            .serve(app.into_make_service())
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(bind).await?;
+        axum::serve(listener, app).await?;
+    }
     Ok(())
 }
 
@@ -1067,6 +1079,7 @@ mod tests {
             json_cache: PlanJsonCache::new(),
             export_secret: "test-secret".into(),
             trust_forwarded: true,
+            tls_pem: None,
         }
     }
 

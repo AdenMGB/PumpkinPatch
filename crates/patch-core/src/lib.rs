@@ -115,7 +115,7 @@ pub use plan_web_groups::{
     delete_web_group, list_all_web_permissions, list_permissions_for_group, list_web_group_names,
     save_permissions_for_group,
 };
-pub use plan_export::{default_export_dir, export_plan_static_bundle};
+pub use plan_export::{default_export_dir, export_plan_static_bundle, plan_tls_pem_paths};
 pub use plan_theme::{plan_theme_json, plan_theme_json_db, save_plan_theme_json};
 pub use orchestration::{
     build_topology, hot_wire_velocity_toml, NetworkTopology, TopologyEdge, TopologyNode,

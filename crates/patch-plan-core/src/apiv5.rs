@@ -30,7 +30,9 @@ pub fn plan_capabilities_v1() -> Value {
                 "plan_commandusages",
                 "plan_extension_user_values",
                 "plan_extension_server_values",
-                "plan_extension_groups"
+                "plan_extension_groups",
+                "plan_extension_tables",
+                "plan_extension_table_rows"
             ]},
             "ResolverService": { "available": true }
         }

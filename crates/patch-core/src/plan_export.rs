@@ -9,7 +9,7 @@ use crate::{
 };
 use serde_json::json;
 use sqlx::SqlitePool;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub async fn export_plan_static_bundle(
     pool: &SqlitePool,
@@ -152,4 +152,40 @@ pub fn write_plan_export_index(export_dir: &Path) -> Result<()> {
 
 pub fn default_export_dir(network_data_path: &Path) -> std::path::PathBuf {
     network_data_path.join("plan-export")
+}
+
+/// PEM TLS material for Plan HTTPS (`network/data/plan/tls/cert.pem` + `key.pem`).
+pub fn plan_tls_pem_paths(network_data_path: &Path) -> Option<(PathBuf, PathBuf)> {
+    let dir = network_data_path.join("plan/tls");
+    let cert = dir.join("cert.pem");
+    let key = dir.join("key.pem");
+    if cert.is_file() && key.is_file() {
+        Some((cert, key))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tls_path_tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn discovers_pem_pair_under_plan_tls() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tls = tmp.path().join("plan/tls");
+        std::fs::create_dir_all(&tls).unwrap();
+        std::fs::File::create(tls.join("cert.pem"))
+            .unwrap()
+            .write_all(b"cert")
+            .unwrap();
+        std::fs::File::create(tls.join("key.pem"))
+            .unwrap()
+            .write_all(b"key")
+            .unwrap();
+        let paths = plan_tls_pem_paths(tmp.path()).expect("pem pair");
+        assert!(paths.0.ends_with("cert.pem"));
+        assert!(paths.1.ends_with("key.pem"));
+    }
 }
