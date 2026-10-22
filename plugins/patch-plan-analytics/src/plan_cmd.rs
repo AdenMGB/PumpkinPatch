@@ -1,11 +1,14 @@
 //! In-game `/patchplan` and `/plan` commands (Plan §7 subset).
 
 use crate::state::{
-    drain_registration_completions, drain_web_admin_actions, persist_state, player_id,
-    queue_registration_completion, queue_web_admin_action, unix_now, with_runtime, write_export,
+    drain_registration_completions, drain_web_admin_actions, persist_state, placeholder_context_for,
+    player_id, queue_registration_completion, queue_web_admin_action, unix_now, with_runtime,
+    write_export,
 };
 use patch_analytics_protocol::WebAdminAction;
-use patch_plan_core::{active_playtime_in_weeks, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS};
+use patch_plan_core::{
+    active_playtime_in_weeks, resolve_placeholder, ActivityIndex, DEFAULT_PLAYTIME_THRESHOLD_MS,
+};
 use pumpkin_plugin_api::command::{
     Arg, ArgumentType, Command, CommandError, CommandNode, CommandSender, ConsumedArgs,
     StringType,
@@ -26,7 +29,13 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         .execute(StatsHandler)
         .then(CommandNode::literal("help").execute(HelpHandler))
         .then(CommandNode::literal("top").execute(TopHandler))
-        .then(CommandNode::literal("ingame").execute(StatsHandler))
+        .then(
+            literal_aliases("ingame", &["qinspect"], IngameHandler)
+                .then(
+                    CommandNode::argument("target", &ArgumentType::String(StringType::Word))
+                        .execute(IngameOtherHandler),
+                ),
+        )
         .then(CommandNode::literal("sessions").execute(SessionsHandler))
         .then(
             CommandNode::literal("search").then(
@@ -36,7 +45,7 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         )
         .then(CommandNode::literal("info").execute(InfoHandler))
         .then(CommandNode::literal("json").execute(JsonHandler))
-        .then(CommandNode::literal("servers").execute(ServersListHandler))
+        .then(literal_aliases("servers", &["serverlist", "sl", "ls"], ServersListHandler))
         .then(CommandNode::literal("reload").execute(ReloadHandler))
         .then(
             CommandNode::literal("register").then(
@@ -44,17 +53,24 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                     .execute(RegisterHandler),
             ),
         )
-        .then(CommandNode::literal("network").execute(NetworkLinkHandler))
-        .then(CommandNode::literal("players").execute(PlayersLinkHandler))
+        .then(literal_aliases("network", &["netw"], NetworkLinkHandler))
+        .then(literal_aliases("players", &["pl", "playerlist", "list"], PlayersLinkHandler))
         .then(
-            CommandNode::literal("player").then(
+            literal_aliases("player", &["inspect"], PlayerSelfLinkHandler).then(
                 CommandNode::argument("target", &ArgumentType::String(StringType::Word))
                     .execute(PlayerLinkHandler),
             ),
         )
         .then(CommandNode::literal("export").execute(ExportHandler))
-        .then(CommandNode::literal("server").execute(ServerLinkHandler))
-        .then(CommandNode::literal("users").execute(UsersHandler))
+        .then(literal_aliases("server", &["analyze", "a", "analysis"], ServerLinkHandler))
+        .then(literal_aliases("users", &["webusers"], UsersHandler))
+        .then(
+            CommandNode::literal("placeholder").then(
+                CommandNode::argument("key", &ArgumentType::String(StringType::Greedy))
+                    .execute(PlaceholderHandler),
+            ),
+        )
+        .then(CommandNode::literal("disable").execute(DisableHandler))
         .then(
             CommandNode::literal("setgroup").then(
                 CommandNode::argument("user", &ArgumentType::String(StringType::Word)).then(
@@ -77,9 +93,31 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         .execute(UnregisterOtherHandler),
                 ),
         )
-        .then(CommandNode::literal("db").then(CommandNode::literal("status").execute(DbStatusHandler)));
+        .then(
+            CommandNode::literal("db")
+                .then(CommandNode::literal("status").execute(DbStatusHandler))
+                .then(CommandNode::literal("optimize").execute(DbOptimizeHandler))
+                .then(
+                    CommandNode::literal("backup").then(
+                        CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
+                            .execute(DbBackupHandler),
+                    ),
+                ),
+        );
     context.register_command(cmd, "patchplan.command");
     Ok(())
+}
+
+fn literal_aliases<H: CommandHandler + Copy>(
+    literal: &str,
+    aliases: &[&str],
+    handler: H,
+) -> CommandNode {
+    let mut node = CommandNode::literal(literal).execute(handler);
+    for alias in aliases {
+        node = node.then(CommandNode::literal(alias).execute(handler));
+    }
+    node
 }
 
 struct HelpHandler;
@@ -106,7 +144,9 @@ impl CommandHandler for HelpHandler {
             "§e/plan setgroup <user> <group>§r — web RBAC (console)",
             "§e/plan logout <user>§r — invalidate web sessions (console)",
             "§e/plan unregister§r — delete your linked web account",
+            "§e/plan placeholder <key>§r — resolve a %plan_*% placeholder",
             "§e/plan db status§r — SQLite export / flush status",
+            "§e/plan db optimize§r — queue DB maintenance (desktop Plan store)",
         ] {
             player.send_system_message(TextComponent::text(line), false);
         }
@@ -700,6 +740,227 @@ impl CommandHandler for ReloadHandler {
     }
 }
 
+struct IngameHandler;
+
+impl CommandHandler for IngameHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let id = player_id(&player);
+        send_ingame_summary(&player, &id, server.get_player_count());
+        Ok(1)
+    }
+}
+
+struct IngameOtherHandler;
+
+impl CommandHandler for IngameOtherHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let target_name = match args.get_value("target") {
+            Arg::Simple(s) => s.to_lowercase(),
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan ingame <player>"),
+                ));
+            }
+        };
+        let target_uuid = with_runtime(|rt| {
+            rt.players
+                .values()
+                .find(|p| p.name.to_lowercase() == target_name)
+                .map(|p| p.uuid.clone())
+        })
+        .flatten();
+        let Some(target_uuid) = target_uuid else {
+            return Err(CommandError::CommandFailed(
+                TextComponent::text("Player not found in Plan export data"),
+            ));
+        };
+        send_ingame_summary(&player, &target_uuid, server.get_player_count());
+        Ok(1)
+    }
+}
+
+struct PlaceholderHandler;
+
+impl CommandHandler for PlaceholderHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let key = match args.get_value("key") {
+            Arg::Simple(s) => s,
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan placeholder %plan_players_online%"),
+                ));
+            }
+        };
+        let id = player_id(&player);
+        let online = server.get_player_count();
+        let msg = with_runtime(|rt| {
+            let ctx = placeholder_context_for(rt, &id, online);
+            resolve_placeholder(key, &ctx)
+                .map(|v| format!("§6{}§r → §f{}", key, v))
+                .or_else(|| {
+                    Some(format!("§7Unknown or unsupported placeholder: §f{}", key))
+                })
+        })
+        .flatten()
+        .unwrap_or_else(|| "§7Plan runtime not initialized.".into());
+        player.send_system_message(TextComponent::text(&msg), false);
+        Ok(1)
+    }
+}
+
+struct DisableHandler;
+
+impl CommandHandler for DisableHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        Ok(1)
+    }
+}
+
+struct DbOptimizeHandler;
+
+impl CommandHandler for DbOptimizeHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let _ = with_runtime(|rt| sync_plan_export(rt, server.get_player_count()));
+        Ok(1)
+    }
+}
+
+struct DbBackupHandler;
+
+impl CommandHandler for DbBackupHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let db_type = match args.get_value("db_type") {
+            Arg::Simple(s) => s,
+            _ => "sqlite",
+        };
+        let _ = with_runtime(|rt| sync_plan_export(rt, server.get_player_count()));
+        let _ = (db_type, sender);
+        Ok(1)
+    }
+}
+
+struct PlayerSelfLinkHandler;
+
+impl CommandHandler for PlayerSelfLinkHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        _args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        let player = require_player(&sender)?;
+        let id = player_id(&player);
+        player.send_system_message(
+            TextComponent::text(&format!(
+                "§6Plan profile§r — open Pumpkin Patch Analytics → player §f{}§7 (§f{}§7)",
+                player.get_display_name().get_text(),
+                id
+            )),
+            false,
+        );
+        Ok(1)
+    }
+}
+
+fn send_ingame_summary(
+    player: &pumpkin_plugin_api::player::Player,
+    target_uuid: &str,
+    online: u32,
+) {
+    let (summary, sessions_hint) = with_runtime(|rt| {
+        let entry = rt.players.get(target_uuid)?;
+        let now_ms = unix_now() * 1000;
+        let triples: Vec<(i64, i64, u64)> = entry
+            .completed_sessions
+            .iter()
+            .map(|s| {
+                (
+                    s.start_unix * 1000,
+                    s.end_unix * 1000,
+                    s.afk_secs * 1000,
+                )
+            })
+            .collect();
+        let (w1, w2, w3) = active_playtime_in_weeks(&triples, now_ms);
+        let ai = ActivityIndex::calculate(w1, w2, w3, DEFAULT_PLAYTIME_THRESHOLD_MS);
+        let geo = if entry.geolocation.is_empty() {
+            String::new()
+        } else {
+            format!(" | Geo {}", entry.geolocation)
+        };
+        let summary = format!(
+            "§6{}§r — Playtime {}s | AFK {}s | Deaths {} | PvP {} | Mob {} | PAI {:.2} ({}){}",
+            entry.name,
+            entry.playtime_secs,
+            entry.afk_time_secs,
+            entry.deaths,
+            entry.player_kills,
+            entry.mob_kills,
+            ai.value,
+            ai.group.label(),
+            geo
+        );
+        let sessions_hint = if entry.completed_sessions.is_empty() {
+            "Sessions: none closed yet this export cycle.".into()
+        } else {
+            let last = entry.completed_sessions.last().unwrap();
+            format!(
+                "Sessions: {} closed | last {}s (AFK {}s)",
+                entry.completed_sessions.len(),
+                last.end_unix - last.start_unix,
+                last.afk_secs
+            )
+        };
+        Some((summary, sessions_hint))
+    })
+    .flatten()
+    .unwrap_or_else(|| {
+        (
+            "No stats recorded yet.".into(),
+            "Play on this server with Patch Plan deployed.".into(),
+        )
+    });
+    let _ = online;
+    player.send_system_message(TextComponent::text(&summary), false);
+    player.send_system_message(TextComponent::text(&sessions_hint), false);
+}
+
 struct StatsHandler;
 
 impl CommandHandler for StatsHandler {
@@ -711,61 +972,7 @@ impl CommandHandler for StatsHandler {
     ) -> Result<i32, CommandError> {
         let player = require_player(&sender)?;
         let id = player_id(&player);
-        let (summary, sessions_hint) = with_runtime(|rt| {
-            let entry = rt.players.get(&id)?;
-            let now_ms = unix_now() * 1000;
-            let triples: Vec<(i64, i64, u64)> = entry
-                .completed_sessions
-                .iter()
-                .map(|s| {
-                    (
-                        s.start_unix * 1000,
-                        s.end_unix * 1000,
-                        s.afk_secs * 1000,
-                    )
-                })
-                .collect();
-            let (w1, w2, w3) = active_playtime_in_weeks(&triples, now_ms);
-            let ai = ActivityIndex::calculate(w1, w2, w3, DEFAULT_PLAYTIME_THRESHOLD_MS);
-            let geo = if entry.geolocation.is_empty() {
-                String::new()
-            } else {
-                format!(" | Geo {}", entry.geolocation)
-            };
-            let summary = format!(
-                "Playtime {}s | AFK {}s | Deaths {} | PvP {} | Mob {} | PAI {:.2} ({}){}",
-                entry.playtime_secs,
-                entry.afk_time_secs,
-                entry.deaths,
-                entry.player_kills,
-                entry.mob_kills,
-                ai.value,
-                ai.group.label(),
-                geo
-            );
-            let sessions_hint = if entry.completed_sessions.is_empty() {
-                "Sessions: none closed yet this export cycle.".into()
-            } else {
-                let last = entry.completed_sessions.last().unwrap();
-                format!(
-                    "Sessions: {} closed | last {}s (AFK {}s)",
-                    entry.completed_sessions.len(),
-                    last.end_unix - last.start_unix,
-                    last.afk_secs
-                )
-            };
-            Some((summary, sessions_hint))
-        })
-        .flatten()
-        .unwrap_or_else(|| {
-            (
-                "No stats recorded yet.".into(),
-                "Play on this server with Patch Plan deployed.".into(),
-            )
-        });
-
-        player.send_system_message(TextComponent::text(&summary), false);
-        player.send_system_message(TextComponent::text(&sessions_hint), false);
+        send_ingame_summary(&player, &id, _server.get_player_count());
         Ok(1)
     }
 }

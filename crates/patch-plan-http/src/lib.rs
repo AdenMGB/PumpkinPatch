@@ -48,6 +48,7 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/query", post(query))
         .route("/v1/errors", get(errors_diagnostics))
         .route("/v1/filters", get(filters))
+        .route("/v1/docs", get(openapi_docs))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_layer::require_plan_session,
@@ -85,7 +86,6 @@ pub fn router(state: PlanHttpState) -> Router {
         .route("/v1/theme", get(theme))
         .route("/v1/auth/login", post(auth_login))
         .route("/v1/auth/register", post(auth_register))
-        .route("/v1/docs", get(openapi_docs))
         .merge(session_protected)
         .merge(admin_protected)
         .with_state(state);
@@ -403,16 +403,30 @@ async fn filters(
 
 async fn query(
     State(st): State<PlanHttpState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<ServerQuery>,
     Json(body): Json<PlanQueryRequest>,
 ) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.query").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
     match execute_plan_query(&st.pool, &st.network_id, q.server.as_deref(), &body).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-async fn errors_diagnostics(State(st): State<PlanHttpState>) -> impl IntoResponse {
+async fn errors_diagnostics(
+    State(st): State<PlanHttpState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.errors").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
     let rows = sqlx::query_as::<_, (i64, String, String, i32)>(
         "SELECT time, request_method, request_uri, response_code FROM plan_access_log ORDER BY time DESC LIMIT 50",
     )
@@ -437,7 +451,15 @@ async fn errors_diagnostics(State(st): State<PlanHttpState>) -> impl IntoRespons
     }
 }
 
-async fn openapi_docs() -> impl IntoResponse {
+async fn openapi_docs(
+    State(st): State<PlanHttpState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.docs").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
     Json(serde_json::json!({
         "openapi": "3.0.3",
         "info": { "title": "Pumpkin Patch Plan API", "version": "1.0.0" },

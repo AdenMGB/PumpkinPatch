@@ -658,6 +658,79 @@ pub fn load_persisted_state(path: &str) -> Result<PersistedState, String> {
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
+pub fn placeholder_context_for(
+    rt: &RuntimeState,
+    target_uuid: &str,
+    online: u32,
+) -> patch_plan_core::PlanPlaceholderContext {
+    let now_ms = unix_now() * 1000;
+    let mut top: Vec<(String, u64, u64)> = rt
+        .players
+        .values()
+        .map(|p| (p.name.clone(), p.playtime_secs, p.afk_time_secs))
+        .collect();
+    top.sort_by_key(|(_, play, _)| std::cmp::Reverse(*play));
+    top.truncate(10);
+
+    let avg_tps_day = {
+        let cutoff = unix_now() - 86_400;
+        let samples: Vec<f64> = rt
+            .performance_samples
+            .iter()
+            .filter(|s| s.t >= cutoff)
+            .map(|s| s.ticks_per_second)
+            .collect();
+        if samples.is_empty() {
+            None
+        } else {
+            Some(samples.iter().sum::<f64>() / samples.len() as f64)
+        }
+    };
+
+    let entry = rt.players.get(target_uuid);
+    let session_triples = entry
+        .map(|e| {
+            e.completed_sessions
+                .iter()
+                .map(|s| {
+                    (
+                        s.start_unix * 1000,
+                        s.end_unix * 1000,
+                        s.afk_secs * 1000,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    patch_plan_core::PlanPlaceholderContext {
+        server_name: rt.config.server_name.clone(),
+        server_uuid: rt.config.server_id.clone(),
+        players_online: online,
+        players_total: rt.players.len() as u64,
+        peak_online: rt.peak_online,
+        total_joins: rt.total_joins,
+        player_name: entry.map(|e| e.name.clone()),
+        player_uuid: Some(target_uuid.to_string()),
+        playtime_secs: entry.map(|e| e.playtime_secs).unwrap_or(0),
+        afk_secs: entry.map(|e| e.afk_time_secs).unwrap_or(0),
+        deaths: entry.map(|e| e.deaths as u32).unwrap_or(0),
+        player_kills: entry.map(|e| e.player_kills as u32).unwrap_or(0),
+        mob_kills: entry.map(|e| e.mob_kills as u32).unwrap_or(0),
+        kick_count: entry.map(|e| e.kick_count as u32).unwrap_or(0),
+        geolocation: entry
+            .map(|e| e.geolocation.clone())
+            .unwrap_or_default(),
+        registered_unix: entry.map(|e| e.first_seen_unix).unwrap_or(0),
+        last_seen_unix: entry.map(|e| e.last_seen_unix).unwrap_or(0),
+        session_triples,
+        now_ms,
+        avg_tps_day,
+        avg_ping_day: None,
+        top_playtime: top,
+    }
+}
+
 pub fn gamemode_label(mode: pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMode) -> String {
     use pumpkin_plugin_api::wit::pumpkin::plugin::common::GameMode;
     match mode {

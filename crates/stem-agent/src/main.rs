@@ -33,8 +33,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let body = if req.starts_with("GET /health") {
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nok\n"
             } else if req.starts_with("GET /vineyard") {
+                let routes = bus.total_route_count().await;
+                let servers = bus.registered_server_count().await;
                 format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"peer\":\"{peer}\",\"routes\":0}}\n"
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"peer\":\"{peer}\",\"routes\":{routes},\"servers\":{servers}}}\n"
                 )
             } else {
                 "HTTP/1.1 404 Not Found\r\n\r\n".into()

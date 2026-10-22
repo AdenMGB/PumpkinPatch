@@ -80,6 +80,19 @@ impl VineyardBus {
             .cloned()
             .unwrap_or_default()
     }
+
+    pub async fn total_route_count(&self) -> usize {
+        self.routes
+            .read()
+            .await
+            .values()
+            .map(|v| v.len())
+            .sum()
+    }
+
+    pub async fn registered_server_count(&self) -> usize {
+        self.server_aliases.read().await.len()
+    }
 }
 
 impl Default for VineyardBus {

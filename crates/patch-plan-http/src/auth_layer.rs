@@ -7,9 +7,39 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use patch_core::{plan_log_access, plan_validate_cookie, username_for_session_cookie};
+use patch_core::{
+    plan_log_access, plan_validate_cookie, user_has_permission, username_for_session_cookie,
+};
 
 use crate::PlanHttpState;
+
+pub async fn authorize_session_permission(
+    st: &PlanHttpState,
+    headers: &axum::http::HeaderMap,
+    permission: &str,
+) -> Result<String, (StatusCode, String)> {
+    let session = extract_plan_session(headers).ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Plan session required".to_string(),
+    ))?;
+    if !plan_validate_cookie(&st.pool, &session).await.unwrap_or(false) {
+        return Err((StatusCode::UNAUTHORIZED, "invalid session".to_string()));
+    }
+    let username = username_for_session_cookie(&st.pool, &session)
+        .await
+        .unwrap_or(None)
+        .ok_or((StatusCode::UNAUTHORIZED, "invalid session".to_string()))?;
+    let allowed = user_has_permission(&st.pool, &username, permission)
+        .await
+        .unwrap_or(false);
+    if !allowed {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("{permission} required"),
+        ));
+    }
+    Ok(username)
+}
 
 pub fn extract_plan_session(headers: &axum::http::HeaderMap) -> Option<String> {
     if let Some(value) = headers.get("x-plan-session") {
