@@ -1,9 +1,9 @@
 //! Plan /v1/query and /v1/filters subset for the desktop app.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::plan_store::{list_players_table, PlanPlayerTableRow};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Column, Row, SqlitePool};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanFilterTypeInfo {
@@ -483,6 +483,68 @@ async fn compute_cohort_view(
     })
 }
 
+/// APIv5 QueryService read path — single `SELECT` only (no writes).
+pub async fn execute_readonly_sql(pool: &SqlitePool, sql: &str) -> Result<Vec<serde_json::Value>> {
+    let trimmed = sql.trim();
+    if trimmed.is_empty() {
+        return Err(Error::InvalidState("empty SQL".into()));
+    }
+    let upper = trimmed.to_ascii_uppercase();
+    if !upper.starts_with("SELECT") {
+        return Err(Error::InvalidState("only SELECT queries are permitted".into()));
+    }
+    if trimmed.contains(';') {
+        return Err(Error::InvalidState("multiple SQL statements are not permitted".into()));
+    }
+    for forbidden in [
+        "INSERT ", "UPDATE ", "DELETE ", "DROP ", "ATTACH ", "ALTER ", "CREATE ", "REPLACE ",
+        "PRAGMA ", "VACUUM",
+    ] {
+        if upper.contains(forbidden) {
+            return Err(Error::InvalidState(format!(
+                "forbidden keyword in read-only query: {}",
+                forbidden.trim()
+            )));
+        }
+    }
+    let rows = sqlx::query(trimmed).fetch_all(pool).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let cols = row.columns();
+        let mut obj = serde_json::Map::new();
+        for (idx, col) in cols.iter().enumerate() {
+            let name = col.name();
+            obj.insert(name.to_string(), sqlite_cell_json(&row, idx));
+        }
+        out.push(serde_json::Value::Object(obj));
+    }
+    Ok(out)
+}
+
+fn sqlite_cell_json(row: &sqlx::sqlite::SqliteRow, idx: usize) -> serde_json::Value {
+    use sqlx::ValueRef;
+    if let Ok(raw) = row.try_get_raw(idx) {
+        if raw.is_null() {
+            return serde_json::Value::Null;
+        }
+    }
+    if let Ok(v) = row.try_get::<i64, _>(idx) {
+        return serde_json::json!(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(idx) {
+        return serde_json::Number::from_f64(v)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null);
+    }
+    if let Ok(v) = row.try_get::<Vec<u8>, _>(idx) {
+        return serde_json::Value::String(String::from_utf8_lossy(&v).into_owned());
+    }
+    row.try_get::<String, _>(idx)
+        .ok()
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null)
+}
+
 /// In-memory filter used by `execute_plan_query` (unit-tested).
 pub fn apply_query_filters(players: &mut Vec<PlanPlayerTableRow>, request: &PlanQueryRequest) {
     if !request.activity_groups.is_empty() {
@@ -701,5 +763,29 @@ mod tests {
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
         assert_eq!(players[0].name, "Steve");
+    }
+
+    #[tokio::test]
+    async fn readonly_sql_allows_select_and_blocks_writes() {
+        use sqlx::sqlite::SqlitePoolOptions;
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory sqlite");
+        sqlx::query("CREATE TABLE demo (id INTEGER, label TEXT)")
+            .execute(&pool)
+            .await
+            .expect("create");
+        sqlx::query("INSERT INTO demo (id, label) VALUES (2, 'ok')")
+            .execute(&pool)
+            .await
+            .expect("insert");
+        let rows = execute_readonly_sql(&pool, "SELECT id, label FROM demo WHERE id = 2")
+            .await
+            .expect("select");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].get("id").and_then(|v| v.as_i64()), Some(2));
+        assert!(execute_readonly_sql(&pool, "DELETE FROM demo").await.is_err());
+        assert!(execute_readonly_sql(&pool, "SELECT 1; SELECT 2").await.is_err());
     }
 }

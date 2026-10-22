@@ -729,6 +729,32 @@ pub fn load_persisted_state(path: &str) -> Result<PersistedState, String> {
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
+fn count_players_with_activity_group(
+    rt: &RuntimeState,
+    group: patch_plan_core::ActivityGroup,
+) -> u64 {
+    let now_ms = unix_now() * 1000;
+    rt.players
+        .values()
+        .filter(|p| {
+            let triples: Vec<(i64, i64, u64)> = p
+                .completed_sessions
+                .iter()
+                .map(|s| (s.start_unix * 1000, s.end_unix * 1000, s.afk_secs * 1000))
+                .collect();
+            let (w1, w2, w3) =
+                patch_plan_core::active_playtime_in_weeks(&triples, now_ms);
+            let ai = patch_plan_core::ActivityIndex::calculate(
+                w1,
+                w2,
+                w3,
+                patch_plan_core::DEFAULT_PLAYTIME_THRESHOLD_MS,
+            );
+            ai.group == group
+        })
+        .count() as u64
+}
+
 pub fn placeholder_context_for(
     rt: &RuntimeState,
     target_uuid: &str,
@@ -1027,6 +1053,10 @@ pub fn placeholder_context_for(
         player_is_banned: entry.map(|e| e.banned).unwrap_or(false),
         player_is_operator: entry.map(|e| e.operator).unwrap_or(false),
         player_session_length_longest_secs,
+        players_regular: count_players_with_activity_group(
+            rt,
+            patch_plan_core::ActivityGroup::Regular,
+        ),
         top_playtime: top,
     }
 }

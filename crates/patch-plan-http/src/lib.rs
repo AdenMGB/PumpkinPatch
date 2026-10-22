@@ -14,7 +14,8 @@ use axum::{
     Json, Router,
 };
 use patch_core::{
-    execute_plan_query, extension_data_v1, ingest_signed_export, list_command_usages,
+    execute_plan_query, execute_readonly_sql, extension_data_v1, ingest_signed_export,
+    list_command_usages,
     list_join_addresses, list_kills, players_online_at,
     list_web_users, load_cached_plan_query, logout_web_user, network_overview_v1,
     player_gdpr_export_json, plan_log_access, plan_web_login, read_disk_cache, start_web_registration,
@@ -67,6 +68,7 @@ pub fn router(state: PlanHttpState) -> Router {
     let export_dir = state.static_export_dir.clone();
     let session_protected = Router::new()
         .route("/v1/query", get(query_by_token).post(query))
+        .route("/v1/query/sql", post(query_sql_readonly))
         .route("/v1/import", post(import_signed))
         .route("/v1/errors", get(errors_diagnostics))
         .route("/v1/filters", get(filters))
@@ -720,6 +722,27 @@ async fn query_by_token(
     match load_cached_plan_query(&st.pool, &q.token).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct QuerySqlBody {
+    sql: String,
+}
+
+async fn query_sql_readonly(
+    State(st): State<PlanHttpState>,
+    headers: HeaderMap,
+    Json(body): Json<QuerySqlBody>,
+) -> impl IntoResponse {
+    if let Err(resp) =
+        auth_layer::authorize_session_permission(&st, &headers, "access.query").await
+    {
+        return (resp.0, resp.1).into_response();
+    }
+    match execute_readonly_sql(&st.pool, &body.sql).await {
+        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     }
 }
 

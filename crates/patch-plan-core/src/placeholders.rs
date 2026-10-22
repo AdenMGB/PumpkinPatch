@@ -87,6 +87,8 @@ pub struct PlanPlaceholderContext {
     pub player_is_banned: bool,
     pub player_is_operator: bool,
     pub player_session_length_longest_secs: u64,
+    /// Players classified in the Regular activity group (indepth §7.2).
+    pub players_regular: u64,
     /// Ranked `(name, playtime_secs, afk_secs)` for top-N placeholders.
     pub top_playtime: Vec<(String, u64, u64)>,
 }
@@ -134,7 +136,7 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_tps_spikes_week" => Some(ctx.tps_spikes_week.to_string()),
         "plan_tps_spikes_month" => Some(ctx.tps_spikes_month.to_string()),
         "plan_player_favorite_server" => Some(ctx.favorite_server.clone()),
-        "plan_players_regular" => Some(ctx.players_total.to_string()),
+        "plan_players_regular" => Some(ctx.players_regular.to_string()),
         "plan_players_new_day" => Some(ctx.players_new_day.to_string()),
         "plan_players_new_week" => Some(ctx.players_new_week.to_string()),
         "plan_players_new_month" => Some(ctx.players_new_month.to_string()),
@@ -210,7 +212,7 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
             let total = ctx.playtime_secs;
             Some(format_duration(total / n))
         }
-        "plan_player_session_length_Longest" => {
+        "plan_player_session_length_Longest" | "plan_player_session_length_longest" => {
             Some(format_duration(ctx.player_session_length_longest_secs))
         }
         "plan_player_player_caused_deaths" => Some(ctx.player_kills.to_string()),
@@ -442,6 +444,18 @@ mod tests {
         assert_eq!(
             resolve_placeholder("%plan_player_is_banned%", &ctx).as_deref(),
             Some("true")
+        );
+    }
+
+    #[test]
+    fn resolves_players_regular() {
+        let ctx = PlanPlaceholderContext {
+            players_regular: 7,
+            ..PlanPlaceholderContext::default()
+        };
+        assert_eq!(
+            resolve_placeholder("%plan_players_regular%", &ctx).as_deref(),
+            Some("7")
         );
     }
 
