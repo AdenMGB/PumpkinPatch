@@ -4,6 +4,43 @@ use crate::error::{Error, Result};
 use sqlx::{Row, SqlitePool};
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PlanBackupEntry {
+    pub path: String,
+    pub bytes: u64,
+    pub modified_ms: i64,
+}
+
+pub fn list_plan_backups(backups_root: &Path) -> Result<Vec<PlanBackupEntry>> {
+    if !backups_root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(backups_root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("db") {
+            continue;
+        }
+        let meta = std::fs::metadata(&path)?;
+        entries.push(PlanBackupEntry {
+            path: path.display().to_string(),
+            bytes: meta.len(),
+            modified_ms: meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0),
+        });
+    }
+    entries.sort_by_key(|e| std::cmp::Reverse(e.modified_ms));
+    Ok(entries)
+}
+
 pub struct PlanDbBackupReport {
     pub path: PathBuf,
     pub bytes: u64,
@@ -175,6 +212,14 @@ pub async fn process_desktop_plan_requests(
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[tokio::test]
+    async fn list_backups_empty_when_missing_dir() {
+        let dir = std::env::temp_dir().join("patch-plan-no-backups-dir");
+        let _ = std::fs::remove_dir_all(&dir);
+        let list = list_plan_backups(&dir).unwrap();
+        assert!(list.is_empty());
+    }
 
     #[tokio::test]
     async fn mark_uninstalled_hides_from_network_list() {

@@ -94,6 +94,7 @@ pub fn run() {
             api::plan_auth::plan_web_user_set_group,
             api::plan_auth::plan_web_user_logout,
             api::plan_auth::plan_web_user_delete,
+            api::plan_db::plan_db_list_backups,
             api::plan_db::plan_db_optimize,
             api::plan_db::plan_db_backup,
             api::plan_db::plan_db_remove_player,
@@ -103,6 +104,7 @@ pub fn run() {
             api::plan_db::plan_db_restore,
             api::platform::crow_swarm_run,
             api::platform::patch_cas_put_bytes,
+            api::platform::patchwork_merge_pack_dirs,
             api::telemetry::subscribe_live_telemetry,
             api::plugins_resolve::plugins_resolve_install_order,
         ])

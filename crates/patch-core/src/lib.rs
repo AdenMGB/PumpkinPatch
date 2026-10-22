@@ -94,7 +94,7 @@ pub use plan_overviews::{
 pub use plan_db::{
     backup_plan_sqlite_file, clear_plan_network_data, mark_plan_server_uninstalled,
     optimize_plan_sqlite, process_desktop_plan_requests, remove_plan_player,
-    restore_plan_sqlite_from_backup, PlanDbBackupReport,
+    list_plan_backups, restore_plan_sqlite_from_backup, PlanBackupEntry, PlanDbBackupReport,
 };
 pub use plan_import::import_signed_plan_export;
 pub use plan_sync::sync_network_plan_exports;

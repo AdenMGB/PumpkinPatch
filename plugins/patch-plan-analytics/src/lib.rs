@@ -96,6 +96,8 @@ impl Plugin for PatchPlanPlugin {
             web_admin_actions: Vec::new(),
             desktop_plan_requests: Vec::new(),
             pending_db_op: None,
+            analytics_enabled: true,
+            kick_counting_enabled: true,
             vineyard_sink: None,
         };
         let _ = RUNTIME.set(std::sync::Mutex::new(rt));

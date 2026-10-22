@@ -53,6 +53,9 @@ impl EventHandler<PlayerJoinEvent> for JoinHandler {
     ) -> <PlayerJoinEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
         let now = unix_now();
         with_runtime(|rt| {
+            if !rt.analytics_enabled {
+                return;
+            }
             rt.total_joins += 1;
             let entry = touch_player(rt, &event.player, now);
             entry.join_count += 1;
@@ -134,10 +137,15 @@ impl EventHandler<PlayerKickEvent> for KickHandler {
         event: <PlayerKickEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
     ) -> <PlayerKickEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
         with_runtime(|rt| {
+            if !rt.analytics_enabled {
+                return;
+            }
             rt.total_kicks += 1;
             let now = unix_now();
             let entry = touch_player(rt, &event.player, now);
-            entry.kick_count += 1;
+            if rt.kick_counting_enabled {
+                entry.kick_count += 1;
+            }
             push_event(rt, "kick", &event.player, event.reason.clone());
         });
         event

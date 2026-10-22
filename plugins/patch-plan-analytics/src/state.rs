@@ -52,10 +52,13 @@ pub struct RuntimeState {
     pub web_admin_actions: Vec<patch_analytics_protocol::WebAdminAction>,
     pub desktop_plan_requests: Vec<patch_analytics_protocol::DesktopPlanRequest>,
     pub pending_db_op: Option<PendingDbOp>,
+    /// When false, telemetry handlers no-op (Plan `/plan disable`).
+    pub analytics_enabled: bool,
+    /// When false, kick events are not counted (`/plan disable <kickcount>` prelude).
+    pub kick_counting_enabled: bool,
     pub vineyard_sink: Option<pumpkin_hook_sdk::TelemetrySink>,
 }
 
-#[derive(Debug, Clone)]
 #[derive(Debug, Clone)]
 pub enum PendingDbOp {
     ClearNetwork,

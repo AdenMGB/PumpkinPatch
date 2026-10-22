@@ -117,6 +117,7 @@ pub fn write_plan_export_index(export_dir: &Path) -> Result<()> {
     <li><a href="networkOverview.json">networkOverview.json</a></li>
     <li><a href="theme-default.json">theme-default.json</a></li>
   </ul>
+  <p class="muted">When Plan HTTP is enabled on port 8804, live JSON is also at <code>/v1/serverOverview?server=…</code> and GDPR exports at <code>/v1/player/json?player=…</code>.</p>
   <script>
     fetch('serverOverview.json').then(r => r.json()).then(d => {
       const n = d.numbers || {};

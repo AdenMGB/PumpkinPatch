@@ -71,7 +71,14 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                     .execute(PlaceholderHandler),
             ),
         )
-        .then(CommandNode::literal("disable").execute(DisableHandler))
+        .then(
+            CommandNode::literal("disable")
+                .execute(DisableHandler)
+                .then(
+                    CommandNode::argument("kickcount", &ArgumentType::String(StringType::Word))
+                        .execute(DisableKickHandler),
+                ),
+        )
         .then(
             CommandNode::literal("setgroup").then(
                 CommandNode::argument("user", &ArgumentType::String(StringType::Word)).then(
@@ -865,6 +872,29 @@ impl CommandHandler for DisableHandler {
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         require_console(&sender)?;
+        let _ = with_runtime(|rt| {
+            rt.analytics_enabled = false;
+            persist_state(rt).ok();
+        });
+        Ok(1)
+    }
+}
+
+struct DisableKickHandler;
+
+impl CommandHandler for DisableKickHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        _server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let _ = args.get_value("kickcount");
+        let _ = with_runtime(|rt| {
+            rt.kick_counting_enabled = false;
+            persist_state(rt).ok();
+        });
         Ok(1)
     }
 }

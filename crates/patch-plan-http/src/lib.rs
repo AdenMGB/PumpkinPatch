@@ -248,12 +248,16 @@ async fn online_overview(
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let server = q.server.as_deref();
-    match online_overview_v1(
-        &st.pool,
-        &st.network_id,
-        server,
-        live_online(&st, server),
-    )
+    let key = PlanJsonCache::cache_key("onlineOverview", &st.network_id, server, "");
+    match with_plan_cache(&st.json_cache, key, false, || async {
+        online_overview_v1(
+            &st.pool,
+            &st.network_id,
+            server,
+            live_online(&st, server),
+        )
+        .await
+    })
     .await
     {
         Ok(v) => Json(v).into_response(),
@@ -299,7 +303,12 @@ async fn performance_overview(
     Query(q): Query<ServerQuery>,
 ) -> impl IntoResponse {
     let server = q.server.as_deref();
-    match performance_overview_v1(&st.pool, &st.network_id, server).await {
+    let key = PlanJsonCache::cache_key("performanceOverview", &st.network_id, server, "");
+    match with_plan_cache(&st.json_cache, key, false, || async {
+        performance_overview_v1(&st.pool, &st.network_id, server).await
+    })
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }

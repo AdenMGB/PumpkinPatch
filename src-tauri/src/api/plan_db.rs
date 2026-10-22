@@ -2,9 +2,8 @@ use super::Result;
 use crate::state::AppStateHandle;
 use patch_core::{
     backup_plan_sqlite_file, clear_plan_network_data, import_signed_plan_export,
-    mark_plan_server_uninstalled, optimize_plan_sqlite, remove_plan_player,
-    restore_plan_sqlite_from_backup, PlanDbBackupReport,
-    PlanSyncReport,
+    list_plan_backups, mark_plan_server_uninstalled, optimize_plan_sqlite, remove_plan_player,
+    restore_plan_sqlite_from_backup, PlanBackupEntry, PlanDbBackupReport, PlanSyncReport,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -14,6 +13,17 @@ use uuid::Uuid;
 pub struct PlanDbBackupResponse {
     pub path: String,
     pub bytes: u64,
+}
+
+#[tauri::command]
+pub async fn plan_db_list_backups(
+    state: tauri::State<'_, AppStateHandle>,
+    network_id: Uuid,
+) -> Result<Vec<PlanBackupEntry>> {
+    let inner = state.get().await?;
+    let network = inner.db.get_network(network_id).await?;
+    let dir = std::path::PathBuf::from(&network.data_path).join("plan-backups");
+    list_plan_backups(&dir).map_err(Into::into)
 }
 
 #[tauri::command]
