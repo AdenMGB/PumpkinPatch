@@ -213,6 +213,7 @@ pub enum DesktopPlanRequest {
     DbBackup { label: String },
     DbRemovePlayer { target: String },
     DbClearNetwork,
+    DbMarkServerUninstalled { server: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -115,6 +115,12 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
                             .execute(DbClearPromptHandler),
                     ),
+                )
+                .then(
+                    CommandNode::literal("uninstalled").then(
+                        CommandNode::argument("server", &ArgumentType::String(StringType::Word))
+                            .execute(DbUninstalledHandler),
+                    ),
                 ),
         )
         .then(literal_aliases("accept", &["yes", "y"], AcceptDbHandler))
@@ -992,6 +998,35 @@ impl CommandHandler for CancelDbHandler {
     }
 }
 
+struct DbUninstalledHandler;
+
+impl CommandHandler for DbUninstalledHandler {
+    fn handle(
+        &self,
+        sender: CommandSender,
+        server: Server,
+        args: ConsumedArgs,
+    ) -> Result<i32, CommandError> {
+        require_console(&sender)?;
+        let target = match args.get_value("server") {
+            Arg::Simple(s) => s.to_string(),
+            _ => {
+                return Err(CommandError::CommandFailed(
+                    TextComponent::text("Usage: /plan db uninstalled <server>"),
+                ));
+            }
+        };
+        let _ = with_runtime(|rt| {
+            queue_desktop_plan_request(
+                rt,
+                DesktopPlanRequest::DbMarkServerUninstalled { server: target },
+            );
+            sync_plan_export(rt, server.get_player_count());
+        });
+        Ok(1)
+    }
+}
+
 struct ImportHandler;
 
 impl CommandHandler for ImportHandler {
@@ -1002,6 +1037,7 @@ impl CommandHandler for ImportHandler {
         _args: ConsumedArgs,
     ) -> Result<i32, CommandError> {
         require_console(&sender)?;
+        let _ = sender;
         Ok(1)
     }
 }

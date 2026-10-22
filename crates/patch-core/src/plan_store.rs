@@ -226,6 +226,11 @@ pub async fn ensure_plan_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await;
+    let _ = sqlx::query(
+        "ALTER TABLE plan_servers ADD COLUMN is_installed INTEGER NOT NULL DEFAULT 1",
+    )
+    .execute(pool)
+    .await;
     Ok(())
 }
 
@@ -2063,6 +2068,7 @@ pub struct PlanNetworkServerRow {
     pub id: i64,
     pub uuid: String,
     pub name: String,
+    pub is_installed: bool,
 }
 
 pub async fn plan_network_servers_v1(
@@ -2070,7 +2076,9 @@ pub async fn plan_network_servers_v1(
     network_id: &str,
 ) -> Result<Vec<PlanNetworkServerRow>> {
     let rows = sqlx::query(
-        "SELECT id, uuid, name FROM plan_servers WHERE network_id = ? ORDER BY name ASC",
+        "SELECT id, uuid, name, is_installed FROM plan_servers
+         WHERE network_id = ? AND is_installed = 1
+         ORDER BY name ASC",
     )
     .bind(network_id)
     .fetch_all(pool)
@@ -2081,6 +2089,7 @@ pub async fn plan_network_servers_v1(
             id: row.get("id"),
             uuid: row.get("uuid"),
             name: row.get("name"),
+            is_installed: row.get::<i64, _>("is_installed") != 0,
         })
         .collect())
 }

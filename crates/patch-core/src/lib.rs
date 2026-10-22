@@ -9,6 +9,7 @@ mod plan_perf;
 mod plan_query;
 mod plan_store;
 mod plan_db;
+mod plan_import;
 mod plan_sync;
 mod plan_auth;
 mod plan_extension;
@@ -90,9 +91,10 @@ pub use plan_overviews::{
     PlanRetentionV1,
 };
 pub use plan_db::{
-    backup_plan_sqlite_file, clear_plan_network_data, optimize_plan_sqlite,
-    process_desktop_plan_requests, remove_plan_player, PlanDbBackupReport,
+    backup_plan_sqlite_file, clear_plan_network_data, mark_plan_server_uninstalled,
+    optimize_plan_sqlite, process_desktop_plan_requests, remove_plan_player, PlanDbBackupReport,
 };
+pub use plan_import::import_signed_plan_export;
 pub use plan_sync::sync_network_plan_exports;
 pub use db::Database;
 pub use error::{Error, Result};

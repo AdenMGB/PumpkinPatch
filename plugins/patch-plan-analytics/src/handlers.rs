@@ -13,11 +13,35 @@ use pumpkin_plugin_api::events::{
     PlayerExpChangeEvent, PlayerFishEvent, PlayerGamemodeChangeEvent, PlayerHarvestBlockEvent,
     PlayerItemBreakEvent, PlayerItemConsumeEvent, PlayerItemDamageEvent, PlayerJoinEvent,
     PlayerKickEvent, PlayerLeaveEvent, PlayerLevelChangeEvent, PlayerLoginEvent,
-    PlayerPreLoginEvent, PlayerPortalEvent,
+    PlayerMoveEvent, PlayerPreLoginEvent, PlayerPortalEvent,
     PlayerRecipeDiscoverEvent, PlayerRespawnEvent, PlayerStatisticIncrementEvent,
     PlayerTeleportEvent,
 };
 use pumpkin_plugin_api::Server;
+
+pub struct MoveHandler;
+impl EventHandler<PlayerMoveEvent> for MoveHandler {
+    fn handle(
+        &self,
+        _server: Server,
+        event: <PlayerMoveEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data,
+    ) -> <PlayerMoveEvent as pumpkin_plugin_api::events::FromIntoEvent>::Data {
+        if event.cancelled {
+            return event;
+        }
+        let from = event.from_position;
+        let to = event.to_position;
+        let block_moved = from.0.floor() != to.0.floor()
+            || from.1.floor() != to.1.floor()
+            || from.2.floor() != to.2.floor();
+        if block_moved {
+            with_runtime(|rt| {
+                session_activity(rt, &event.player, unix_now());
+            });
+        }
+        event
+    }
+}
 
 pub struct JoinHandler;
 impl EventHandler<PlayerJoinEvent> for JoinHandler {

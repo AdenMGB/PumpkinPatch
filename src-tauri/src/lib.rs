@@ -98,6 +98,8 @@ pub fn run() {
             api::plan_db::plan_db_backup,
             api::plan_db::plan_db_remove_player,
             api::plan_db::plan_db_clear_network,
+            api::plan_db::plan_db_mark_server_uninstalled,
+            api::plan_db::plan_import_signed_export,
             api::platform::crow_swarm_run,
             api::platform::patch_cas_put_bytes,
             api::telemetry::subscribe_live_telemetry,

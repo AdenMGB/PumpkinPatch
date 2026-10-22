@@ -107,6 +107,9 @@ impl Plugin for PatchPlanPlugin {
             .register_event_handler(JoinHandler, EventPriority::Normal, false)
             .map_err(|e| e.to_string())?;
         context
+            .register_event_handler(MoveHandler, EventPriority::Normal, false)
+            .map_err(|e| e.to_string())?;
+        context
             .register_event_handler(LeaveHandler, EventPriority::Normal, false)
             .map_err(|e| e.to_string())?;
         context

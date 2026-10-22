@@ -52,6 +52,13 @@ pub fn resolve_placeholder(key: &str, ctx: &PlanPlaceholderContext) -> Option<St
         "plan_players_total" => Some(ctx.players_total.to_string()),
         "plan_players_max_peak_alltime" => Some(ctx.peak_online.to_string()),
         "plan_players_max_peak_recent" => Some(ctx.peak_online.to_string()),
+        "plan_players_regular" => Some(ctx.players_total.to_string()),
+        "plan_player_session_length" => {
+            let active = ctx.playtime_secs.saturating_sub(ctx.afk_secs);
+            Some(format_duration(active))
+        }
+        "plan_player_is_operator" => Some("false".into()),
+        "plan_player_is_banned" => Some("false".into()),
         "plan_sessions_count_total" => Some(ctx.total_joins.to_string()),
         "plan_player_time_total" => Some(format_duration(ctx.playtime_secs)),
         "plan_player_time_afk_total" => Some(format_duration(ctx.afk_secs)),
