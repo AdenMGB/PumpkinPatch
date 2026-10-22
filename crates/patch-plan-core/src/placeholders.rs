@@ -499,6 +499,94 @@ mod tests {
     }
 
     #[test]
+    fn indepth_server_placeholder_catalog_resolves() {
+        let ctx = PlanPlaceholderContext {
+            server_name: "Hub".into(),
+            server_uuid: "uuid".into(),
+            players_online: 5,
+            players_total: 100,
+            peak_online: 42,
+            players_new_day: 1,
+            players_new_week: 2,
+            players_new_month: 3,
+            players_unique_day: 4,
+            players_unique_week: 5,
+            players_unique_month: 6,
+            sessions_playtime_secs: 3600,
+            sessions_active_secs: 3000,
+            sessions_afk_secs: 600,
+            sessions_count_day: 10,
+            sessions_count_week: 20,
+            sessions_count_month: 30,
+            sessions_avg_length_day: 120,
+            sessions_avg_length_week: 180,
+            sessions_avg_length_month: 240,
+            sessions_avg_unique_players_day: 3,
+            sessions_avg_unique_players_week: 4,
+            sessions_avg_unique_players_month: 5,
+            deaths_total: 9,
+            deaths_day: 1,
+            deaths_week: 2,
+            deaths_month: 3,
+            mob_kills_total: 4,
+            mob_kills_day: 1,
+            mob_kills_week: 1,
+            mob_kills_month: 2,
+            player_kills_total: 5,
+            player_kills_day: 1,
+            player_kills_week: 2,
+            player_kills_month: 2,
+            avg_tps_day: Some(19.8),
+            avg_tps_week: Some(19.5),
+            avg_tps_month: Some(19.2),
+            tps_spikes_day: 1,
+            tps_spikes_week: 2,
+            tps_spikes_month: 3,
+            avg_ping_day: Some(45.0),
+            avg_ping_week: Some(50.0),
+            avg_ping_month: Some(55.0),
+            min_ping_day: Some(20),
+            max_ping_day: Some(120),
+            timezone_offset: "UTC".into(),
+            peak_online_date_alltime: "2020".into(),
+            peak_online_date_recent: "2021".into(),
+            players_regular: 8,
+            total_joins: 500,
+            sessions_playtime_day: 100,
+            sessions_playtime_week: 200,
+            sessions_playtime_month: 300,
+            sessions_active_day: 80,
+            sessions_active_week: 160,
+            sessions_active_month: 240,
+            sessions_afk_day: 20,
+            sessions_afk_week: 40,
+            sessions_afk_month: 60,
+            top_playtime: vec![("Alex".into(), 100, 10)],
+            ..PlanPlaceholderContext::default()
+        };
+        let keys = [
+            "%plan_server_name%",
+            "%plan_server_uuid%",
+            "%plan_players_total%",
+            "%plan_players_new_day%",
+            "%plan_players_online%",
+            "%plan_sessions_playtime_total%",
+            "%plan_sessions_deaths_total%",
+            "%plan_tps_day%",
+            "%plan_tps_week%",
+            "%plan_tps_month%",
+            "%plan_ping_average_day%",
+            "%plan_top_player_playtime_total_active_1%",
+        ];
+        for key in keys {
+            assert!(
+                resolve_placeholder(key, &ctx).is_some(),
+                "expected {key} to resolve"
+            );
+        }
+    }
+
+    #[test]
     fn resolves_top_playtime_name() {
         let ctx = PlanPlaceholderContext {
             top_playtime: vec![("Alex".into(), 3600, 60), ("Bob".into(), 120, 0)],

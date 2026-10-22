@@ -173,7 +173,7 @@ pub use plugin_install::discover_plugins_root;
 pub use plugins::{
     deploy_auto_plugins_for_server, deploy_plugin, PluginManifest, PluginManifestEntry,
 };
-pub use process::{LogLine, ProcessSupervisor};
+pub use process::{GourdVoiceLaunch, LogLine, ProcessSupervisor};
 pub use pumpkin_market::{
     PumpkinMarketClient, PumpkinMarketListResult, PumpkinMarketPluginCommand,
     PumpkinMarketPluginDetail, PumpkinMarketPluginSummary, PumpkinMarketPluginVersion,

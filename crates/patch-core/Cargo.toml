@@ -11,6 +11,7 @@ harvest-metrics = { path = "../harvest-metrics" }
 vineyard-bus = { path = "../vineyard-bus" }
 vineyard-protocol = { path = "../vineyard-protocol" }
 gourd-proxy = { path = "../gourd-proxy" }
+tendril-voice = { path = "../tendril-voice" }
 velocity-bridge = { path = "../velocity-bridge" }
 bcrypt = "0.16"
 patch-network-protocol = { path = "../../plugins/patch-network-protocol" }

@@ -39,15 +39,12 @@ pub struct TendrilVoiceFlushResult {
     pub output_dir: String,
 }
 
-pub async fn ensure_tendril_voice_running(
+pub async fn prepare_gourd_voice_launch(
     state: &AppStateHandle,
-    bind: String,
+    bind: SocketAddr,
     proximity_blocks: Option<f64>,
-) -> Result<String> {
+) -> Result<patch_core::GourdVoiceLaunch> {
     let inner = state.get().await?;
-    let addr: SocketAddr = bind
-        .parse()
-        .map_err(|e| patch_core::Error::InvalidState(format!("invalid bind: {e}")))?;
     let proximity = proximity_blocks.unwrap_or(tendril_voice::DEFAULT_PROXIMITY_BLOCKS);
     let stats = Arc::new(TendrilVoiceStats::default());
     let engine = TendrilVoiceEngine::new(proximity);
@@ -59,13 +56,37 @@ pub async fn ensure_tendril_voice_running(
             engine: engine.clone(),
         });
     }
-    let config = TendrilVoiceConfig {
-        bind: addr,
+    Ok(patch_core::GourdVoiceLaunch {
+        bind,
+        engine,
+        stats,
         proximity_blocks: proximity,
+    })
+}
+
+fn spawn_tendril_sfu_task(launch: &patch_core::GourdVoiceLaunch) {
+    let config = TendrilVoiceConfig {
+        bind: launch.bind,
+        proximity_blocks: launch.proximity_blocks,
     };
+    let stats = launch.stats.clone();
+    let engine = launch.engine.clone();
     tokio::spawn(async move {
         let _ = TendrilVoiceSfu::serve_with_engine(config, Some(stats), Some(engine)).await;
     });
+}
+
+pub async fn ensure_tendril_voice_running(
+    state: &AppStateHandle,
+    bind: String,
+    proximity_blocks: Option<f64>,
+) -> Result<String> {
+    let addr: SocketAddr = bind
+        .parse()
+        .map_err(|e| patch_core::Error::InvalidState(format!("invalid bind: {e}")))?;
+    let proximity = proximity_blocks.unwrap_or(tendril_voice::DEFAULT_PROXIMITY_BLOCKS);
+    let launch = prepare_gourd_voice_launch(state, addr, Some(proximity)).await?;
+    spawn_tendril_sfu_task(&launch);
     Ok(format!(
         "TendrilVoice SFU listening on {bind} (proximity {proximity} blocks); Vineyard position stream attached"
     ))

@@ -155,6 +155,20 @@ pub async fn network_start(
         }
     }
 
+    let gourd_voice = if settings.gourd_enabled && settings.tendril_voice_auto_gourd {
+        let bind = format!(
+            "{}:{}",
+            settings.bind_host,
+            settings.tendril_voice_udp_port
+        );
+        let addr: std::net::SocketAddr = bind
+            .parse()
+            .map_err(|e| patch_core::Error::InvalidState(format!("invalid voice bind: {e}")))?;
+        Some(super::voice::prepare_gourd_voice_launch(&state, addr, None).await?)
+    } else {
+        None
+    };
+
     let mut processes = inner.processes.write().await;
     processes
         .start_network(
@@ -165,6 +179,7 @@ pub async fn network_start(
             &java_path,
             &settings.bind_host,
             settings.gourd_enabled,
+            gourd_voice,
             &inner.networks,
             Some(log_tx),
         )
@@ -177,14 +192,6 @@ pub async fn network_start(
         );
     }
     drop(processes);
-    if settings.gourd_enabled && settings.tendril_voice_auto_gourd {
-        let bind = format!(
-            "{}:{}",
-            settings.bind_host,
-            settings.tendril_voice_udp_port
-        );
-        let _ = super::voice::ensure_tendril_voice_running(&state, bind, None).await;
-    }
     let _ = app.emit("network-started", id);
     Ok(())
 }

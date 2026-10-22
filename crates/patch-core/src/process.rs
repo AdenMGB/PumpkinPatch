@@ -5,7 +5,10 @@ use crate::network::{NetworkOrchestrator, VELOCITY_BACKEND_HOST};
 use crate::port_wait::wait_for_tcp_port;
 use crate::rcon::send_rcon_command;
 use crate::models::{NetworkRecord, NetworkRuntimeStatus, ServerRecord};
-use gourd_proxy::{parse_pool_state, GourdConfig, GourdProxy, GourdRouter, ScarecrowStats};
+use gourd_proxy::{
+    parse_pool_state, GourdConfig, GourdProxy, GourdRouter, GourdVoiceEdge, ScarecrowStats,
+};
+use tendril_voice::{TendrilVoiceEngine, TendrilVoiceStats};
 use std::sync::Arc;
 use vineyard_protocol::RouteWireSpec;
 use serde::Serialize;
@@ -20,6 +23,15 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use uuid::Uuid;
+
+/// TendrilVoice SFU launched alongside Gourd on the edge UDP port.
+#[derive(Clone)]
+pub struct GourdVoiceLaunch {
+    pub bind: SocketAddr,
+    pub engine: Arc<TendrilVoiceEngine>,
+    pub stats: Arc<TendrilVoiceStats>,
+    pub proximity_blocks: f64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LogLine {
@@ -139,6 +151,7 @@ impl ProcessSupervisor {
         java_path: &str,
         bind_host: &str,
         gourd_enabled: bool,
+        gourd_voice: Option<GourdVoiceLaunch>,
         orchestrator: &NetworkOrchestrator,
         log_tx: Option<mpsc::UnboundedSender<LogLine>>,
     ) -> Result<()> {
@@ -226,6 +239,7 @@ impl ProcessSupervisor {
                     servers,
                     bind_host,
                     &hub_path,
+                    gourd_voice,
                     log_tx.clone(),
                 )
                 .await?;
@@ -504,6 +518,7 @@ async fn spawn_gourd(
     servers: &[ServerRecord],
     bind_host: &str,
     hub_path: &PathBuf,
+    voice: Option<GourdVoiceLaunch>,
     log_tx: Option<mpsc::UnboundedSender<LogLine>>,
 ) -> Result<(ManagedHub, GourdRouter, Arc<ScarecrowStats>)> {
     let hub_settings = read_hub_settings(hub_path)?;
@@ -512,7 +527,7 @@ async fn spawn_gourd(
         .map_err(|e| Error::Other(format!("invalid gourd bind: {e}")))?;
     let router = build_gourd_router(network, servers).await?;
     let network_id = network.id;
-    let proxy = GourdProxy::new(
+    let mut proxy = GourdProxy::new(
         GourdConfig {
             bind,
             motd: strip_velocity_motd(&hub_settings.motd),
@@ -522,13 +537,26 @@ async fn spawn_gourd(
         },
         router.clone(),
     );
+    let voice_log = voice.as_ref().map(|v| v.bind.to_string());
+    if let Some(v) = voice {
+        proxy = proxy.with_tendril_voice(GourdVoiceEdge {
+            bind: v.bind,
+            engine: v.engine,
+            stats: v.stats,
+            proximity_blocks: v.proximity_blocks,
+        });
+    }
     let scarecrow = proxy.scarecrow.clone();
     let task = tokio::spawn(async move {
         if let Some(tx) = log_tx {
+            let line = match voice_log {
+                Some(vb) => format!("Gourd listening on {} (TendrilVoice UDP {})", bind, vb),
+                None => format!("Gourd listening on {}", bind),
+            };
             let _ = tx.send(LogLine {
                 network_id,
                 source: "gourd".into(),
-                line: format!("Gourd listening on {}", bind),
+                line,
             });
         }
         let _ = proxy.run().await;

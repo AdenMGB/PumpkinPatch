@@ -12,6 +12,9 @@ pub use router::{
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tendril_voice::{
+    TendrilVoiceConfig, TendrilVoiceEngine, TendrilVoiceSfu, TendrilVoiceStats,
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use uuid::Uuid;
@@ -25,11 +28,20 @@ pub struct GourdConfig {
     pub protocol_version: i32,
 }
 
+/// Edge-terminated TendrilVoice SFU (plangem.md §5.1 — proxy holds the public UDP socket).
+pub struct GourdVoiceEdge {
+    pub bind: SocketAddr,
+    pub engine: Arc<TendrilVoiceEngine>,
+    pub stats: Arc<TendrilVoiceStats>,
+    pub proximity_blocks: f64,
+}
+
 pub struct GourdProxy {
     config: Arc<GourdConfig>,
     router: GourdRouter,
     shutdown: watch::Sender<bool>,
     pub scarecrow: Arc<ScarecrowStats>,
+    voice: Option<GourdVoiceEdge>,
 }
 
 impl GourdProxy {
@@ -40,10 +52,34 @@ impl GourdProxy {
             router,
             shutdown,
             scarecrow: Arc::new(ScarecrowStats::default()),
+            voice: None,
         }
     }
 
+    pub fn with_tendril_voice(mut self, edge: GourdVoiceEdge) -> Self {
+        self.voice = Some(edge);
+        self
+    }
+
     pub async fn run(self) -> Result<(), std::io::Error> {
+        if let Some(edge) = self.voice {
+            let bind = edge.bind;
+            let config = TendrilVoiceConfig {
+                bind,
+                proximity_blocks: edge.proximity_blocks,
+            };
+            let stats = edge.stats;
+            let engine = edge.engine;
+            tokio::spawn(async move {
+                let _ = TendrilVoiceSfu::serve_with_engine(
+                    config,
+                    Some(stats),
+                    Some(engine),
+                )
+                .await;
+            });
+            eprintln!("gourd TendrilVoice UDP edge on {}", bind);
+        }
         let listener = TcpListener::bind(self.config.bind).await?;
         let mut shutdown_rx = self.shutdown.subscribe();
         loop {
