@@ -71,7 +71,7 @@ pub use plan_query::{
 };
 pub use plan_extension::{
     ensure_builtin_extensions, extension_data_v1, register_plan_extension, PlanExtensionDataV1,
-    PlanExtensionPlugin, PlanExtensionTab,
+    PlanExtensionPlugin, PlanExtensionTab, PluginBooleanGroupFilter, PluginNumberFilter,
 };
 pub use plan_auth::{
     complete_web_registration, delete_web_user, list_web_users, log_access as plan_log_access,

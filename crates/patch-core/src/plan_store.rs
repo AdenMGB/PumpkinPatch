@@ -588,12 +588,16 @@ async fn upsert_plan_server(
     payload: &AnalyticsPayload,
 ) -> Result<i64> {
     sqlx::query(
-        "INSERT INTO plan_servers (uuid, network_id, name) VALUES (?, ?, ?)
-         ON CONFLICT(uuid) DO UPDATE SET name = excluded.name, network_id = excluded.network_id",
+        "INSERT INTO plan_servers (uuid, network_id, name, is_proxy) VALUES (?, ?, ?, ?)
+         ON CONFLICT(uuid) DO UPDATE SET
+           name = excluded.name,
+           network_id = excluded.network_id,
+           is_proxy = excluded.is_proxy",
     )
     .bind(&payload.server_id)
     .bind(network_id)
     .bind(&payload.server_name)
+    .bind(if payload.is_proxy { 1 } else { 0 })
     .execute(pool)
     .await?;
 
@@ -2457,6 +2461,7 @@ mod ingest_tests {
             registration_completions: vec![],
             web_admin_actions: vec![],
             desktop_plan_requests: vec![],
+            is_proxy: false,
         }
     }
 
@@ -2542,6 +2547,7 @@ mod ingest_tests {
             registration_completions: vec![],
             web_admin_actions: vec![],
             desktop_plan_requests: vec![],
+            is_proxy: false,
         };
         let report = ingest_payload(&pool, "net-geo", &payload)
             .await
@@ -2590,6 +2596,27 @@ mod ingest_tests {
             player_stats.get("minecraft:custom:walk_one_cm"),
             Some(&1000)
         );
+    }
+
+    #[tokio::test]
+    async fn ingest_persists_is_proxy_flag() {
+        let pool = SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .expect("memory db");
+        ensure_plan_schema(&pool).await.expect("schema");
+        let mut payload = sample_payload();
+        payload.is_proxy = true;
+        ingest_payload(&pool, "net-1", &payload)
+            .await
+            .expect("ingest");
+        let flag: i64 = sqlx::query_scalar(
+            "SELECT is_proxy FROM plan_servers WHERE uuid = 'srv-uuid-1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("is_proxy");
+        assert_eq!(flag, 1);
     }
 
     #[tokio::test]

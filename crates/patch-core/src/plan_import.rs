@@ -71,6 +71,7 @@ mod tests {
             registration_completions: vec![],
             web_admin_actions: vec![],
             desktop_plan_requests: vec![],
+            is_proxy: false,
         };
         let secret = "test-secret";
         let sig = patch_analytics_protocol::sign_payload(&payload, secret).unwrap();

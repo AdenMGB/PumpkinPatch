@@ -621,6 +621,7 @@ pub fn write_export(rt: &RuntimeState, online_now: u32) -> Result<(), String> {
         registration_completions: rt.registration_completions.clone(),
         web_admin_actions: rt.web_admin_actions.clone(),
         desktop_plan_requests: rt.desktop_plan_requests.clone(),
+        is_proxy: rt.config.is_proxy,
     };
     let signature =
         patch_analytics_protocol::sign_payload(&payload, &rt.config.export_secret)?;

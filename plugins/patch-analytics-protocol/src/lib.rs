@@ -40,6 +40,9 @@ pub struct PatchPlanConfig {
     /// Player UUIDs exempt from command usage logging (`plan.ignore.commanduse`).
     #[serde(default)]
     pub command_usage_exempt_uuids: Vec<String>,
+    /// BungeeCord / Velocity / Gourd proxy node — drives Plan `is_proxy` and network CCU graphs.
+    #[serde(default)]
+    pub is_proxy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -261,6 +264,9 @@ pub struct AnalyticsPayload {
     pub web_admin_actions: Vec<WebAdminAction>,
     #[serde(default)]
     pub desktop_plan_requests: Vec<DesktopPlanRequest>,
+    /// Copied from [`PatchPlanConfig::is_proxy`] on export.
+    #[serde(default)]
+    pub is_proxy: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -368,6 +374,7 @@ mod tests {
             registration_completions: vec![],
             web_admin_actions: vec![],
             desktop_plan_requests: vec![],
+            is_proxy: false,
         };
         let sig = sign_payload(&payload, "test-secret").unwrap();
         let export = SignedExport {

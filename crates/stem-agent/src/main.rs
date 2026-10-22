@@ -3,12 +3,22 @@
 mod port_pool;
 
 use clap::Parser;
+use gourd_proxy::predictive_scale_recommendation;
 use port_pool::PortPool;
+use serde::Deserialize;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vineyard_bus::VineyardBus;
 use vineyard_protocol::RouteWireSpec;
+
+#[derive(Deserialize)]
+struct ScaleRecommendBody {
+    current_ccu: u32,
+    active_backends: u32,
+    players_per_backend: u32,
+    hidden_ready: u32,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "stem-agent", about = "Pumpkin Patch stem-agent (Vineyard phase-1)")]
@@ -58,6 +68,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"port\":{port}}}\n"
                 )
+            } else if req.contains("POST /scale/recommend") {
+                let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
+                let json = req[body_start..].trim();
+                let body = if let Ok(body) = serde_json::from_str::<ScaleRecommendBody>(json) {
+                    let promote = predictive_scale_recommendation(
+                        body.current_ccu,
+                        body.active_backends,
+                        body.players_per_backend,
+                        body.hidden_ready,
+                    );
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{{\"promote\":{promote}}}\n"
+                    )
+                } else {
+                    "HTTP/1.1 400 Bad Request\r\n\r\n".to_string()
+                };
+                body
             } else if req.contains("POST /vineyard/route") {
                 let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(0);
                 let json = req[body_start..].trim();

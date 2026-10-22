@@ -532,6 +532,20 @@ export interface PlanQueryRequest {
   played_after_ms?: number | null
   played_before_ms?: number | null
   played_server_uuids?: string[]
+  banned?: string[]
+  operators?: string[]
+  pluginsBooleanGroups?: Array<{
+    plugin: string
+    provider: string
+    value?: boolean | null
+    group?: string | null
+  }>
+  pluginNumbers?: Array<{
+    plugin: string
+    provider: string
+    min?: number | null
+    max?: number | null
+  }>
 }
 
 export interface PlanQueryCohortView {

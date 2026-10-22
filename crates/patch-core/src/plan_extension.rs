@@ -1,9 +1,30 @@
 //! Plan `/v1/extensionData` envelope + in-process DataExtension registry (indepth.md §8).
 
+use crate::plan_store::PlanPlayerTableRow;
 use patch_plan_core::{ExtensionIcon, ExtensionValue, PlanDataExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::{OnceLock, RwLock};
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginBooleanGroupFilter {
+    #[serde(default)]
+    pub plugin: String,
+    #[serde(default, alias = "providerName")]
+    pub provider: String,
+    pub value: Option<bool>,
+    pub group: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginNumberFilter {
+    #[serde(default)]
+    pub plugin: String,
+    #[serde(default, alias = "providerName")]
+    pub provider: String,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanExtensionDataV1 {
@@ -99,6 +120,14 @@ impl PlanDataExtension for HarvestMetricsExtension {
         "HarvestMetrics"
     }
 
+    fn provide_player_data(&self, player_uuid: &str) -> Vec<ExtensionValue> {
+        vec![ExtensionValue {
+            key: "profile_linked".into(),
+            value: Value::Bool(!player_uuid.is_empty()),
+            show_in_players_table: true,
+        }]
+    }
+
     fn plugin_icon(&self) -> ExtensionIcon {
         ExtensionIcon {
             material: "chart-bar".into(),
@@ -120,4 +149,175 @@ pub fn ensure_builtin_extensions() {
     ONCE.get_or_init(|| {
         register_plan_extension(Box::new(HarvestMetricsExtension));
     });
+}
+
+/// Applies Plan `/query` DataExtension boolean/group and numeric filters (indepth.md §5.3).
+pub fn filter_players_by_extension_query(
+    players: &mut Vec<PlanPlayerTableRow>,
+    boolean_groups: &[PluginBooleanGroupFilter],
+    numbers: &[PluginNumberFilter],
+) {
+    if boolean_groups.is_empty() && numbers.is_empty() {
+        return;
+    }
+    ensure_builtin_extensions();
+    let reg = registry().read().expect("extension registry lock");
+    let extensions: Vec<&dyn PlanDataExtension> = reg
+        .extensions
+        .iter()
+        .map(|b| b.as_ref())
+        .collect();
+    players.retain(|p| {
+        player_matches_extension_filters(&p.uuid, boolean_groups, numbers, &extensions)
+    });
+}
+
+fn player_matches_extension_filters(
+    player_uuid: &str,
+    boolean_groups: &[PluginBooleanGroupFilter],
+    numbers: &[PluginNumberFilter],
+    extensions: &[&dyn PlanDataExtension],
+) -> bool {
+    for filter in boolean_groups {
+        if !boolean_group_filter_matches(player_uuid, filter, extensions) {
+            return false;
+        }
+    }
+    for filter in numbers {
+        if !number_filter_matches(player_uuid, filter, extensions) {
+            return false;
+        }
+    }
+    true
+}
+
+fn boolean_group_filter_matches(
+    player_uuid: &str,
+    filter: &PluginBooleanGroupFilter,
+    extensions: &[&dyn PlanDataExtension],
+) -> bool {
+    let plugin = filter.plugin.to_ascii_lowercase();
+    let provider = filter.provider.to_ascii_lowercase();
+    for ext in extensions {
+        if ext.plugin_name().to_ascii_lowercase() != plugin {
+            continue;
+        }
+        for value in ext.provide_player_data(player_uuid) {
+            if value.key.to_ascii_lowercase() != provider {
+                continue;
+            }
+            if let Some(expected) = filter.value {
+                return value.value.as_bool() == Some(expected);
+            }
+            if let Some(group) = &filter.group {
+                return value
+                    .value
+                    .as_str()
+                    .map(|s| s.eq_ignore_ascii_case(group))
+                    .unwrap_or(false);
+            }
+            return value.value.as_bool().unwrap_or(false);
+        }
+    }
+    false
+}
+
+fn number_filter_matches(
+    player_uuid: &str,
+    filter: &PluginNumberFilter,
+    extensions: &[&dyn PlanDataExtension],
+) -> bool {
+    let plugin = filter.plugin.to_ascii_lowercase();
+    let provider = filter.provider.to_ascii_lowercase();
+    for ext in extensions {
+        if ext.plugin_name().to_ascii_lowercase() != plugin {
+            continue;
+        }
+        for value in ext.provide_player_data(player_uuid) {
+            if value.key.to_ascii_lowercase() != provider {
+                continue;
+            }
+            let n = value
+                .value
+                .as_f64()
+                .or_else(|| value.value.as_i64().map(|i| i as f64))
+                .or_else(|| value.value.as_u64().map(|u| u as f64));
+            let Some(n) = n else {
+                return false;
+            };
+            if let Some(min) = filter.min {
+                if n < min {
+                    return false;
+                }
+            }
+            if let Some(max) = filter.max {
+                if n > max {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod extension_query_tests {
+    use super::*;
+    use patch_plan_core::{ExtensionIcon, ExtensionValue};
+
+    struct NumericTestExtension;
+
+    impl PlanDataExtension for NumericTestExtension {
+        fn plugin_name(&self) -> &'static str {
+            "TestPlugin"
+        }
+
+        fn plugin_icon(&self) -> ExtensionIcon {
+            ExtensionIcon {
+                material: "test".into(),
+                url: None,
+            }
+        }
+
+        fn provide_player_data(&self, _player_uuid: &str) -> Vec<ExtensionValue> {
+            vec![ExtensionValue {
+                key: "balance".into(),
+                value: serde_json::json!(42.0),
+                show_in_players_table: true,
+            }]
+        }
+    }
+
+    #[test]
+    fn boolean_extension_filter_matches_harvest_profile_linked() {
+        let ext: &dyn PlanDataExtension = &HarvestMetricsExtension;
+        let filter = PluginBooleanGroupFilter {
+            plugin: "HarvestMetrics".into(),
+            provider: "profile_linked".into(),
+            value: Some(true),
+            group: None,
+        };
+        assert!(boolean_group_filter_matches("uuid-1", &filter, &[ext]));
+        assert!(!boolean_group_filter_matches("", &filter, &[ext]));
+    }
+
+    #[test]
+    fn number_extension_filter_respects_min_max() {
+        let ext: &dyn PlanDataExtension = &NumericTestExtension;
+        let ok = PluginNumberFilter {
+            plugin: "TestPlugin".into(),
+            provider: "balance".into(),
+            min: Some(40.0),
+            max: Some(50.0),
+        };
+        let bad = PluginNumberFilter {
+            plugin: "TestPlugin".into(),
+            provider: "balance".into(),
+            min: Some(100.0),
+            max: None,
+        };
+        assert!(number_filter_matches("p", &ok, &[ext]));
+        assert!(!number_filter_matches("p", &bad, &[ext]));
+    }
 }

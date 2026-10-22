@@ -53,6 +53,12 @@ pub struct PlanQueryRequest {
     /// `Operators` / `Non-operators`.
     #[serde(default)]
     pub operators: Vec<String>,
+    /// Plan React `pluginsBooleanGroups` extension filters.
+    #[serde(default, rename = "pluginsBooleanGroups")]
+    pub plugins_boolean_groups: Vec<crate::plan_extension::PluginBooleanGroupFilter>,
+    /// Plan React `pluginNumbers` extension range filters.
+    #[serde(default, rename = "pluginNumbers")]
+    pub plugin_numbers: Vec<crate::plan_extension::PluginNumberFilter>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -212,12 +218,12 @@ pub async fn plan_filters_catalog(
         PlanFilterTypeInfo {
             id: "pluginsBooleanGroups".into(),
             label: "DataExtension boolean / group filters".into(),
-            implemented: false,
+            implemented: true,
         },
         PlanFilterTypeInfo {
             id: "pluginNumbers".into(),
             label: "DataExtension numeric range filters".into(),
-            implemented: false,
+            implemented: true,
         },
     ];
 
@@ -325,6 +331,11 @@ async fn run_plan_query_uncached(
 ) -> Result<PlanQueryResult> {
     let mut players = list_players_table(pool, network_id, server_uuid, 2000).await?;
     apply_query_filters(&mut players, request);
+    crate::plan_extension::filter_players_by_extension_query(
+        &mut players,
+        &request.plugins_boolean_groups,
+        &request.plugin_numbers,
+    );
     if request.played_after_ms.is_some() || request.played_before_ms.is_some() {
         let active = uuids_played_between(pool, network_id, server_uuid, request).await?;
         players.retain(|p| active.contains(&p.uuid));
@@ -689,23 +700,8 @@ mod tests {
         ];
         let req = PlanQueryRequest {
             activity_groups: vec!["Active".into()],
-            join_addresses: vec![],
             min_activity_index: Some(40.0),
-            max_activity_index: None,
-            min_sessions: None,
-            registered_after_ms: None,
-            registered_before_ms: None,
-            geolocations: vec![],
-            bypass_cache: false,
-            view_after_ms: None,
-            view_before_ms: None,
-            last_seen_after_ms: None,
-            last_seen_before_ms: None,
-            played_after_ms: None,
-            played_before_ms: None,
-            played_server_uuids: vec![],
-            banned: vec![],
-            operators: vec![],
+            ..PlanQueryRequest::default()
         };
         apply_query_filters(&mut players, &req);
         assert_eq!(players.len(), 1);
