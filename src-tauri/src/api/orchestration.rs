@@ -164,5 +164,8 @@ pub async fn analytics_harvest_sync(
         .cache
         .join("harvest")
         .join(format!("{}.harvest.json", network.id));
-    sync_harvest_from_plan_sqlite(inner.db.pool(), &network.id.to_string(), &duck_path).await
+    Ok(
+        sync_harvest_from_plan_sqlite(inner.db.pool(), &network.id.to_string(), &duck_path)
+            .await?,
+    )
 }

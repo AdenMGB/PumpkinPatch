@@ -150,7 +150,7 @@ pub async fn network_start(
             std::sync::atomic::AtomicBool::new(false);
         if !BRIDGE_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
             tokio::spawn(async move {
-                let _ = bridge.serve(addr).await;
+                let _ = velocity_bridge::VelocityBridge::serve(bridge, addr).await;
             });
         }
     }

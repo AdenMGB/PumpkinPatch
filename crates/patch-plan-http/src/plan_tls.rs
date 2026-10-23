@@ -28,6 +28,18 @@ pub async fn rustls_config_from(
     }
 }
 
+fn der_to_pem(label: &str, der: &[u8]) -> Vec<u8> {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut pem = format!("-----BEGIN {label}-----\n");
+    for line in b64.as_bytes().chunks(64) {
+        pem.push_str(&String::from_utf8_lossy(line));
+        pem.push('\n');
+    }
+    pem.push_str(&format!("-----END {label}-----\n"));
+    pem.into_bytes()
+}
+
 fn jks_to_pem(
     path: &Path,
     password: &str,
@@ -58,14 +70,11 @@ fn jks_to_pem(
         .get_private_key_entry(&pick_alias, password.as_bytes())
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-    let key = openssl::pkey::PKey::private_key_from_der(&entry.private_key)
-        .map_err(io::Error::other)?;
-    let key_pem = key.private_key_to_pem_pkcs8().map_err(io::Error::other)?;
+    let key_pem = der_to_pem("PRIVATE KEY", &entry.private_key);
 
     let mut cert_pem = Vec::new();
     for cert in &entry.certificate_chain {
-        let x509 = openssl::x509::X509::from_der(&cert.content).map_err(io::Error::other)?;
-        cert_pem.extend(x509.to_pem().map_err(io::Error::other)?);
+        cert_pem.extend(der_to_pem("CERTIFICATE", &cert.content));
     }
     if cert_pem.is_empty() {
         return Err(io::Error::new(
@@ -78,17 +87,28 @@ fn jks_to_pem(
 
 fn pkcs12_to_pem(path: &Path, password: &str) -> Result<(Vec<u8>, Vec<u8>), io::Error> {
     let der = std::fs::read(path)?;
-    let pkcs12 = openssl::pkcs12::Pkcs12::from_der(&der).map_err(io::Error::other)?;
-    let parsed = pkcs12.parse2(password).map_err(io::Error::other)?;
-    let cert = parsed
-        .cert
-        .as_ref()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "pkcs12 missing certificate"))?;
-    let key = parsed
-        .pkey
-        .as_ref()
+    let pfx = p12::PFX::parse(&der).map_err(|e| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("invalid PKCS#12: {e}"))
+    })?;
+    let keys = pfx.key_bags(password).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("PKCS#12 decrypt failed (wrong password?): {e}"),
+        )
+    })?;
+    let key_der = keys
+        .first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "pkcs12 missing private key"))?;
-    let cert_pem = cert.to_pem().map_err(io::Error::other)?;
-    let key_pem = key.private_key_to_pem_pkcs8().map_err(io::Error::other)?;
+    let certs = pfx.cert_x509_bags(password).map_err(|e| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("PKCS#12 cert bags: {e}"))
+    })?;
+    let first_cert = certs
+        .first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "pkcs12 missing certificate"))?;
+    let mut cert_pem = der_to_pem("CERTIFICATE", first_cert);
+    for extra in certs.iter().skip(1) {
+        cert_pem.extend(der_to_pem("CERTIFICATE", extra));
+    }
+    let key_pem = der_to_pem("PRIVATE KEY", key_der);
     Ok((cert_pem, key_pem))
 }

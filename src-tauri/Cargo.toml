@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 patch-core = { path = "../crates/patch-core" }
 patch-plan-http = { path = "../crates/patch-plan-http" }
 vineyard-protocol = { path = "../crates/vineyard-protocol" }
+vineyard-bus = { path = "../crates/vineyard-bus" }
 velocity-bridge = { path = "../crates/velocity-bridge" }
 patch-plugin-resolve = { path = "../crates/patch-plugin-resolve" }
 crow-swarm = { path = "../crates/crow-swarm" }

@@ -49,9 +49,8 @@ impl VelocityBridge {
             .collect()
     }
 
-    pub async fn serve(self, bind: SocketAddr) -> Result<(), std::io::Error> {
+    pub async fn serve(bridge: Arc<Self>, bind: SocketAddr) -> Result<(), std::io::Error> {
         let listener = TcpListener::bind(bind).await?;
-        let bridge = Arc::new(self);
         loop {
             let (socket, _) = listener.accept().await?;
             let bridge = bridge.clone();

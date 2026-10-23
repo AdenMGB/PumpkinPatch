@@ -27,7 +27,7 @@ pub async fn audit_ledger_append(
     detail: String,
 ) -> Result<String> {
     let inner = state.get().await?;
-    let path = inner.dirs.data.join("audit-chain.jsonl");
+    let path = inner.dirs.cache.join("audit-chain.jsonl");
     let mut ledger = AuditLedger::open(&path).map_err(|e| patch_core::Error::Other(e.to_string()))?;
     let entry = ledger
         .append(&actor, &action, &detail)
@@ -41,11 +41,14 @@ pub async fn patchwork_materialize_merged_pack(
     overlay_dir: String,
     output_dir: String,
 ) -> Result<PackManifest> {
-    Ok(materialize_merged_pack(
-        std::path::Path::new(&base_dir),
-        std::path::Path::new(&overlay_dir),
-        std::path::Path::new(&output_dir),
-    )?)
+    Ok(
+        materialize_merged_pack(
+            std::path::Path::new(&base_dir),
+            std::path::Path::new(&overlay_dir),
+            std::path::Path::new(&output_dir),
+        )
+        .map_err(|e| patch_core::Error::Other(e))?,
+    )
 }
 
 #[tauri::command]
@@ -60,11 +63,11 @@ pub async fn patchwork_merge_pack_dirs(
 ) -> Result<PackManifest> {
     let base_path = std::path::Path::new(&base_dir);
     let overlay_path = std::path::Path::new(&overlay_dir);
-    let base = read_pack_manifest(base_path)?;
-    let overlay = read_pack_manifest(overlay_path)?;
+    let base = read_pack_manifest(base_path).map_err(|e| patch_core::Error::Other(e))?;
+    let overlay = read_pack_manifest(overlay_path).map_err(|e| patch_core::Error::Other(e))?;
     let mut merged = merge_manifests(base, overlay);
-    let mut files = index_pack_assets(base_path)?;
-    files.extend(index_pack_assets(overlay_path)?);
+    let mut files = index_pack_assets(base_path).map_err(|e| patch_core::Error::Other(e))?;
+    files.extend(index_pack_assets(overlay_path).map_err(|e| patch_core::Error::Other(e))?);
     merged.files = files;
     Ok(merged)
 }
