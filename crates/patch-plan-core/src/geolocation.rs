@@ -26,7 +26,7 @@ pub fn geolocation_from_ip(ip: &str) -> String {
     match host.parse::<IpAddr>() {
         Ok(addr) if is_local_or_private(addr) => "Local Machine".to_string(),
         Ok(_) => geolite_country(host)
-            .or_else(|| ip_api_country(host))
+            .or_else(|| ip_api_country_fallback(host))
             .unwrap_or_else(|| "Unknown".to_string()),
         Err(_) => "Unknown".to_string(),
     }
@@ -61,7 +61,18 @@ fn ip_api_cache() -> &'static RwLock<HashMap<String, String>> {
     IP_API_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// HTTP fallback when GeoLite2 is unavailable (indepth §2.4 step 3).
+#[cfg(target_arch = "wasm32")]
+fn ip_api_country_fallback(_ip_host: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn ip_api_country_fallback(ip_host: &str) -> Option<String> {
+    ip_api_country(ip_host)
+}
+
+/// HTTP fallback when GeoLite2 is unavailable (indepth §2.4 step 3). Native only.
+#[cfg(not(target_arch = "wasm32"))]
 fn ip_api_country(ip_host: &str) -> Option<String> {
     if std::env::var("PATCH_PLAN_DISABLE_IP_API").is_ok() {
         return None;

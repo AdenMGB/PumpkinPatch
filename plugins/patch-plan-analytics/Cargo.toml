@@ -14,7 +14,7 @@ crate-type = ["cdylib"]
 patch-analytics-protocol = { path = "../patch-analytics-protocol" }
 patch-plan-core = { path = "../../crates/patch-plan-core" }
 # Must match the Pumpkin server binary (see repo `pumpkin/`). Re-run `npm run build:plugins` after API bumps.
-pumpkin-plugin-api = { path = "../../pumpkin/crates/pumpkin-plugin-api" }
+pumpkin-plugin-api = { path = "../../../pumpkin/crates/pumpkin-plugin-api" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pumpkin-hook-sdk = { path = "../../crates/pumpkin-hook-sdk" }

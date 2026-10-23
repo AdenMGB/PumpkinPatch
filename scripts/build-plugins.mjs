@@ -47,8 +47,17 @@ mkdirSync(artifactsDir, { recursive: true })
 
 if (existsSync(join(pumpkinRoot, '.git'))) {
   console.log('[patch] Syncing pumpkin submodule (master) for plugin API…')
-  run('git', ['fetch', 'origin', 'master'], pumpkinRoot)
-  run('git', ['pull', '--ff-only', 'origin', 'master'], pumpkinRoot)
+  const fetch = spawnSync('git', ['fetch', 'origin', 'master'], {
+    cwd: pumpkinRoot,
+    stdio: 'inherit',
+  })
+  if (fetch.status === 0) {
+    run('git', ['pull', '--ff-only', 'origin', 'master'], pumpkinRoot)
+  } else {
+    console.warn(
+      '[patch] git fetch failed — building against the current pumpkin checkout (offline?).',
+    )
+  }
   const rev = runCapture('git', ['rev-parse', 'HEAD'], pumpkinRoot)
   writeFileSync(join(artifactsDir, 'pumpkin-api-rev.txt'), `${rev}\n`, 'utf8')
   console.log(`[patch] pumpkin API pin → ${rev.slice(0, 12)}`)

@@ -19,6 +19,15 @@ use pumpkin_plugin_api::commands::CommandHandler;
 use pumpkin_plugin_api::text::TextComponent;
 use pumpkin_plugin_api::Server;
 
+/// Registers a literal subcommand plus alias literals that share the same handler type (ZST).
+macro_rules! literal_aliases {
+    ($lit:expr, [$($alias:expr),* $(,)?], $handler:expr) => {{
+        let mut node = CommandNode::literal($lit).execute($handler);
+        $(node = node.then(CommandNode::literal($alias).execute($handler));)*
+        node
+    }};
+}
+
 pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_plugin_api::Result<()> {
     let names = [
         "patchplan".to_string(),
@@ -32,9 +41,9 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         .then(CommandNode::literal("help").execute(HelpHandler))
         .then(CommandNode::literal("top").execute(TopHandler))
         .then(
-            literal_aliases("ingame", &["qinspect"], IngameHandler)
+            literal_aliases!("ingame", ["qinspect"], IngameHandler)
                 .then(
-                    CommandNode::argument("target", &ArgumentType::String(StringType::Word))
+                    CommandNode::argument("target", &ArgumentType::String(StringType::SingleWord))
                         .execute(IngameOtherHandler),
                 ),
         )
@@ -47,7 +56,7 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
         )
         .then(CommandNode::literal("info").execute(InfoHandler))
         .then(CommandNode::literal("json").execute(JsonHandler))
-        .then(literal_aliases("servers", &["serverlist", "sl", "ls"], ServersListHandler))
+        .then(literal_aliases!("servers", ["serverlist", "sl", "ls"], ServersListHandler))
         .then(CommandNode::literal("reload").execute(ReloadHandler))
         .then(
             CommandNode::literal("register")
@@ -62,17 +71,17 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                         .execute(RegisterHandler),
                 ),
         )
-        .then(literal_aliases("network", &["netw"], NetworkLinkHandler))
-        .then(literal_aliases("players", &["pl", "playerlist", "list"], PlayersLinkHandler))
+        .then(literal_aliases!("network", ["netw"], NetworkLinkHandler))
+        .then(literal_aliases!("players", ["pl", "playerlist", "list"], PlayersLinkHandler))
         .then(
-            literal_aliases("player", &["inspect"], PlayerSelfLinkHandler).then(
-                CommandNode::argument("target", &ArgumentType::String(StringType::Word))
+            literal_aliases!("player", ["inspect"], PlayerSelfLinkHandler).then(
+                CommandNode::argument("target", &ArgumentType::String(StringType::SingleWord))
                     .execute(PlayerLinkHandler),
             ),
         )
         .then(CommandNode::literal("export").execute(ExportHandler))
-        .then(literal_aliases("server", &["analyze", "a", "analysis"], ServerLinkHandler))
-        .then(literal_aliases("users", &["webusers"], UsersHandler))
+        .then(literal_aliases!("server", ["analyze", "a", "analysis"], ServerLinkHandler))
+        .then(literal_aliases!("users", ["webusers"], UsersHandler))
         .then(
             CommandNode::literal("placeholder").then(
                 CommandNode::argument("key", &ArgumentType::String(StringType::Greedy))
@@ -83,22 +92,22 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
             CommandNode::literal("disable")
                 .execute(DisableHandler)
                 .then(
-                    CommandNode::argument("kickcount", &ArgumentType::String(StringType::Word))
+                    CommandNode::argument("kickcount", &ArgumentType::String(StringType::SingleWord))
                         .execute(DisableKickHandler),
                 ),
         )
         .then(CommandNode::literal("enable").execute(EnableHandler))
         .then(
             CommandNode::literal("setgroup").then(
-                CommandNode::argument("user", &ArgumentType::String(StringType::Word)).then(
-                    CommandNode::argument("group", &ArgumentType::String(StringType::Word))
+                CommandNode::argument("user", &ArgumentType::String(StringType::SingleWord)).then(
+                    CommandNode::argument("group", &ArgumentType::String(StringType::SingleWord))
                         .execute(SetGroupHandler),
                 ),
             ),
         )
         .then(
             CommandNode::literal("logout").then(
-                CommandNode::argument("user", &ArgumentType::String(StringType::Word))
+                CommandNode::argument("user", &ArgumentType::String(StringType::SingleWord))
                     .execute(LogoutHandler),
             ),
         )
@@ -106,7 +115,7 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
             CommandNode::literal("unregister")
                 .execute(UnregisterSelfHandler)
                 .then(
-                    CommandNode::argument("user", &ArgumentType::String(StringType::Word))
+                    CommandNode::argument("user", &ArgumentType::String(StringType::SingleWord))
                         .execute(UnregisterOtherHandler),
                 ),
         )
@@ -116,25 +125,25 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                 .then(CommandNode::literal("optimize").execute(DbOptimizeHandler))
                 .then(
                     CommandNode::literal("backup").then(
-                        CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("db_type", &ArgumentType::String(StringType::SingleWord))
                             .execute(DbBackupHandler),
                     ),
                 )
                 .then(
                     CommandNode::literal("remove").then(
-                        CommandNode::argument("player", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("player", &ArgumentType::String(StringType::SingleWord))
                             .execute(DbRemovePlayerHandler),
                     ),
                 )
                 .then(
                     CommandNode::literal("clear").then(
-                        CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("db_type", &ArgumentType::String(StringType::SingleWord))
                             .execute(DbClearPromptHandler),
                     ),
                 )
                 .then(
                     CommandNode::literal("uninstalled").then(
-                        CommandNode::argument("server", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("server", &ArgumentType::String(StringType::SingleWord))
                             .execute(DbUninstalledHandler),
                     ),
                 )
@@ -146,46 +155,34 @@ pub fn register_plan_command(context: &pumpkin_plugin_api::Context) -> pumpkin_p
                 )
                 .then(
                     CommandNode::literal("move").then(
-                        CommandNode::argument("from", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("from", &ArgumentType::String(StringType::SingleWord))
                             .then(
-                                CommandNode::argument("to", &ArgumentType::String(StringType::Word))
+                                CommandNode::argument("to", &ArgumentType::String(StringType::SingleWord))
                                     .execute(DbMoveHandler),
                             ),
                     ),
                 )
                 .then(
                     CommandNode::literal("merge").then(
-                        CommandNode::argument("from", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("from", &ArgumentType::String(StringType::SingleWord))
                             .then(
-                                CommandNode::argument("to", &ArgumentType::String(StringType::Word))
+                                CommandNode::argument("to", &ArgumentType::String(StringType::SingleWord))
                                     .execute(DbMergeHandler),
                             ),
                     ),
                 )
                 .then(
                     CommandNode::literal("hotswap").then(
-                        CommandNode::argument("db_type", &ArgumentType::String(StringType::Word))
+                        CommandNode::argument("db_type", &ArgumentType::String(StringType::SingleWord))
                             .execute(DbHotswapHandler),
                     ),
                 ),
         )
-        .then(literal_aliases("accept", &["yes", "y"], AcceptDbHandler))
-        .then(literal_aliases("cancel", &["no", "n"], CancelDbHandler))
+        .then(literal_aliases!("accept", ["yes", "y"], AcceptDbHandler))
+        .then(literal_aliases!("cancel", ["no", "n"], CancelDbHandler))
         .then(CommandNode::literal("import").execute(ImportHandler));
     context.register_command(cmd, "patchplan.command");
     Ok(())
-}
-
-fn literal_aliases<H: CommandHandler + Copy>(
-    literal: &str,
-    aliases: &[&str],
-    handler: H,
-) -> CommandNode {
-    let mut node = CommandNode::literal(literal).execute(handler);
-    for alias in aliases {
-        node = node.then(CommandNode::literal(alias).execute(handler));
-    }
-    node
 }
 
 struct HelpHandler;
@@ -395,12 +392,13 @@ impl CommandHandler for JsonHandler {
         let player = require_player(&sender)?;
         let id = player_id(&player);
         let msg = with_runtime(|rt| {
-            let entry = rt.players.get(&id)?;
-            format!(
-                "§7GDPR export§r: open Pumpkin Patch → Analytics for §f{}§7 (uuid {}) — or run §e/plan json§7 after static export.",
-                entry.name,
-                id
-            )
+            rt.players.get(&id).map(|entry| {
+                format!(
+                    "§7GDPR export§r: open Pumpkin Patch → Analytics for §f{}§7 (uuid {}) — or run §e/plan json§7 after static export.",
+                    entry.name,
+                    id
+                )
+            })
         })
         .flatten()
         .unwrap_or_else(|| {
@@ -497,7 +495,7 @@ impl CommandHandler for PlayerLinkHandler {
             }
         };
         player.send_system_message(
-            TextComponent::text(format!(
+            TextComponent::text(&format!(
                 "§6Plan§r — profile lookup for §f{}§r (synced via Plan HTTP `/v1/player`).",
                 target
             )),
@@ -743,7 +741,7 @@ impl CommandHandler for RegisterHandler {
             let uuid = player_id(&player);
             let name = player.get_display_name().get_text();
             let _ = with_runtime(|rt| {
-                queue_registration_completion(rt, code, &uuid, &name, false);
+                queue_registration_completion(rt, &code, &uuid, &name, false);
                 sync_plan_export(rt, 1);
             });
             player.send_system_message(
@@ -754,7 +752,7 @@ impl CommandHandler for RegisterHandler {
             );
         } else {
             let _ = with_runtime(|rt| {
-                queue_registration_completion(rt, code, "", "console", true);
+                queue_registration_completion(rt, &code, "", "console", true);
                 sync_plan_export(rt, 0);
             });
         }
@@ -885,7 +883,7 @@ impl CommandHandler for PlaceholderHandler {
         let online = server.get_player_count();
         let msg = with_runtime(|rt| {
             let ctx = placeholder_context_for(rt, &id, online);
-            resolve_placeholder(key, &ctx)
+            resolve_placeholder(&key, &ctx)
                 .map(|v| format!("§6{}§r → §f{}", key, v))
                 .or_else(|| {
                     Some(format!("§7Unknown or unsupported placeholder: §f{}", key))
@@ -1161,11 +1159,11 @@ impl CommandHandler for DbMoveHandler {
         require_console(&sender)?;
         let from = match args.get_value("from") {
             Arg::Simple(s) => s,
-            _ => "sqlite",
+            _ => "sqlite".to_string(),
         };
         let to = match args.get_value("to") {
             Arg::Simple(s) => s,
-            _ => "mysql",
+            _ => "mysql".to_string(),
         };
         eprintln!(
             "[Patch Plan] db move {from} -> {to}: Pumpkin Patch uses a single desktop SQLite Plan store; use import/export or desktop tools for migration."
@@ -1186,11 +1184,11 @@ impl CommandHandler for DbMergeHandler {
         require_console(&sender)?;
         let from = match args.get_value("from") {
             Arg::Simple(s) => s,
-            _ => "sqlite",
+            _ => "sqlite".to_string(),
         };
         let to = match args.get_value("to") {
             Arg::Simple(s) => s,
-            _ => "sqlite",
+            _ => "sqlite".to_string(),
         };
         eprintln!(
             "[Patch Plan] db merge {from} into {to}: use desktop Import after exporting signed bundles from each server."
@@ -1211,7 +1209,7 @@ impl CommandHandler for DbHotswapHandler {
         require_console(&sender)?;
         let db_type = match args.get_value("db_type") {
             Arg::Simple(s) => s,
-            _ => "sqlite",
+            _ => "sqlite".to_string(),
         };
         if db_type.eq_ignore_ascii_case("sqlite") {
             let _ = with_runtime(|rt| {

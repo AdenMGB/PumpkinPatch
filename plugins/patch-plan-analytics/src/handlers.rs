@@ -138,8 +138,9 @@ impl EventHandler<PlayerKickEvent> for KickHandler {
         with_analytics(|rt| {
             rt.total_kicks += 1;
             let now = unix_now();
+            let kick_counting = rt.kick_counting_enabled;
             let entry = touch_player(rt, &event.player, now);
-            if rt.kick_counting_enabled {
+            if kick_counting {
                 entry.kick_count += 1;
             }
             push_event(rt, "kick", &event.player, event.reason.clone());

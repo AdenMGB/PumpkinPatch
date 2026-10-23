@@ -7,7 +7,8 @@ mod state;
 use handlers::{
     AdvancementHandler, ChatHandler, CommandHandler, ConsumeHandler, DeathHandler, ExpHandler,
     BedEnterHandler, DropItemHandler, FishHandler, GamemodeHandler, HarvestHandler,
-    ItemBreakHandler, ItemDamageHandler,     JoinHandler, KickHandler, LeaveHandler, LevelHandler,
+    ItemBreakHandler, ItemDamageHandler, JoinHandler, KickHandler, LeaveHandler, LevelHandler,
+    MoveHandler,
     LoginHandler, PortalHandler, PreLoginHandler, RecipeHandler, RespawnHandler, StatisticHandler,
     TeleportHandler,
     WorldChangeHandler,

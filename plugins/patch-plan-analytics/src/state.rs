@@ -137,9 +137,16 @@ fn instance_root_from_data_folder(data_folder: &str) -> Option<std::path::PathBu
         .map(|p| p.to_path_buf())
 }
 
+fn wit_uuid_to_bytes(id: uuid::Uuid) -> [u8; 16] {
+    let mut out = [0u8; 16];
+    out[0..8].copy_from_slice(&id.high.to_be_bytes());
+    out[8..16].copy_from_slice(&id.low.to_be_bytes());
+    out
+}
+
 fn server_id_bytes(server_id: &str) -> [u8; 16] {
-    uuid::Uuid::parse_str(server_id)
-        .map(|u| *u.as_bytes())
+    uuid::parse(server_id)
+        .map(wit_uuid_to_bytes)
         .unwrap_or([0u8; 16])
 }
 
@@ -151,8 +158,7 @@ pub fn emit_vineyard_voice_position(
     z: f64,
 ) {
     let pid = player_id(player);
-    let player_uuid = uuid::Uuid::parse_str(&pid).ok();
-    let Some(player_uuid) = player_uuid else {
+    let Some(player_uuid) = uuid::parse(&pid) else {
         return;
     };
     let dimension = rt
@@ -167,7 +173,7 @@ pub fn emit_vineyard_voice_position(
             )));
     }
     let frame = vineyard_protocol::VoicePositionFrame {
-        player_uuid: *player_uuid.as_bytes(),
+        player_uuid: wit_uuid_to_bytes(player_uuid),
         x,
         y,
         z,
@@ -1015,8 +1021,8 @@ pub fn placeholder_context_for(
                 }
                 sum += w.avg_ping as f64;
                 n += 1;
-                min = Some(min.map_or(w.min_ping, |m| m.min(w.min_ping)));
-                max = Some(max.map_or(w.max_ping, |m| m.max(w.max_ping)));
+                min = Some(min.map_or(w.min_ping, |m: u32| m.min(w.min_ping)));
+                max = Some(max.map_or(w.max_ping, |m: u32| m.max(w.max_ping)));
             }
             let avg = if n > 0 { Some(sum / n as f64) } else { None };
             (avg, min, max)
